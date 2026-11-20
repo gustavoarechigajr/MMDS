@@ -142,7 +142,7 @@ public class MainActivity extends SDLActivity{
     // Second-screen panels, see mm/2s2h/Enhancements/DualScreen/DualScreen.cpp
     public static native void nativeDualScreenSurfaceChanged(android.view.Surface surface, int width, int height);
     public static native void nativeDualScreenSurfaceDestroyed();
-    public static native void nativeDualScreenTouch(int action, float x, float y);
+    public static native void nativeDualScreenTouch(int action, float x, float y, float x2, float y2, int pointers);
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {

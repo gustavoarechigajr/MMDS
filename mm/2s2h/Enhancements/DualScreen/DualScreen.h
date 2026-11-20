@@ -15,6 +15,7 @@ typedef enum DualScreenPage {
     DUAL_SCREEN_PAGE_ITEMS,
     DUAL_SCREEN_PAGE_MASKS,
     DUAL_SCREEN_PAGE_QUEST,
+    DUAL_SCREEN_PAGE_MAP,
     DUAL_SCREEN_PAGE_NOTEBOOK,
     DUAL_SCREEN_PAGE_STATUS,
     DUAL_SCREEN_PAGE_MAX
@@ -31,6 +32,10 @@ typedef struct DualScreenTouchEvent {
     int32_t type;
     float x;
     float y;
+    // Second finger, valid when pointers >= 2 (pinch)
+    float x2;
+    float y2;
+    int32_t pointers;
 } DualScreenTouchEvent;
 
 // True while a secondary display surface exists and the feature is enabled

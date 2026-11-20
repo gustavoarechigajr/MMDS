@@ -10,12 +10,16 @@
 #include "interface/week_static/week_static.h"
 #include "archives/icon_item_static/icon_item_static_yar.h"
 #include "objects/object_mag/object_mag.h"
+#include "interface/icon_item_field_static/icon_item_field_static.h"
+#include "archives/icon_item_24_static/icon_item_24_static_yar.h"
+#include "z64horse.h"
 #include "BenPort.h"
 #include "2s2h/BenGui/HudEditor.h"
 #include "DualScreen.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include <libultraship/bridge/consolevariablebridge.h>
 #include <stdlib.h>
+#include <math.h>
 
 // Bombers' Notebook pieces from z_play_hireso.c
 void BombersNotebook_DrawHeaders(Gfx** gfxP);
@@ -355,6 +359,9 @@ typedef struct PanelTouch {
     f32 y;
     f32 startX;
     f32 startY;
+    s32 pointers; // fingers down; the second one is (x2, y2)
+    f32 x2;
+    f32 y2;
 } PanelTouch;
 
 static PanelTouch sTouch;
@@ -376,6 +383,13 @@ static void Panel_PollTouch(void) {
         }
         sTouch.x = event.x;
         sTouch.y = event.y;
+        sTouch.x2 = event.x2;
+        sTouch.y2 = event.y2;
+        sTouch.pointers = event.pointers;
+        if (event.pointers >= 2) {
+            // A second finger makes this a gesture, never a tap
+            sTouch.moved = true;
+        }
         if ((ABS_ALT((s32)(sTouch.x - sTouch.startX)) > TOUCH_SLOP) ||
             (ABS_ALT((s32)(sTouch.y - sTouch.startY)) > TOUCH_SLOP)) {
             sTouch.moved = true;
@@ -422,7 +436,7 @@ static s32 Panel_VerticalSwipe(void) {
 #define STRIP_DIGIT_W 22
 #define STRIP_DIGIT_H 30
 #define STRIP_TIME_W (4 * (STRIP_DIGIT_W * 5 / 8) + STRIP_DIGIT_W / 2)
-#define STRIP_TAB_SIZE 60
+#define STRIP_TAB_SIZE 56
 #define STRIP_TAB_ICON 44
 
 typedef struct PanelTab {
@@ -434,6 +448,7 @@ static PanelTab sTabs[] = {
     { DUAL_SCREEN_PAGE_ITEMS, ITEM_OCARINA_OF_TIME },
     { DUAL_SCREEN_PAGE_MASKS, ITEM_MASK_DEKU },
     { DUAL_SCREEN_PAGE_QUEST, ITEM_SONG_TIME },
+    { DUAL_SCREEN_PAGE_MAP, ITEM_COMPASS }, // ITEM_COMPASS's icon is the dungeon map
     { DUAL_SCREEN_PAGE_STATUS, ITEM_REMAINS_ODOLWA },
     { DUAL_SCREEN_PAGE_NOTEBOOK, ITEM_BOMBERS_NOTEBOOK },
 };
@@ -510,6 +525,14 @@ static Gfx* Panel_DrawTabs(Gfx* gfx, s32 canvasHeight) {
             gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
         } else {
             gfx = Panel_SetTexturedMode(gfx, 190, 180, 160, 210);
+        }
+        if (sTabs[i].iconItem == ITEM_COMPASS) {
+            // A 24x24 quest icon rather than a 32x32 item icon
+            gfx = Panel_DrawTexRGBA32(gfx, gItemIcons[ITEM_COMPASS], 24, 24,
+                                      x + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow,
+                                      tabY + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow, STRIP_TAB_ICON + grow * 2,
+                                      STRIP_TAB_ICON + grow * 2);
+            continue;
         }
         if (sTabs[i].iconItem == ITEM_SONG_TIME) {
             // The song note is a small IA glyph; draw it as a brown note instead of a full-colour icon
@@ -620,6 +643,9 @@ static PanelEquipTarget sEquipTargets[] = {
     { EQUIP_TARGET_D_RIGHT + 2, FACE_X, DPAD_Y + 60, 60 }, // D-Down
     { EQUIP_TARGET_D_UP, FACE_X, DPAD_Y - 60, 60 },
 };
+
+static void Panel_UpdateMapPage(PlayState* play);
+static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play);
 
 static s32 sSelectedSlot = -1; // inventory slot picked by a tap, waiting for a button
 static s32 sDragSlot = -1;     // inventory slot under the finger since it went down
@@ -1698,6 +1724,11 @@ void DualScreen_Update(PlayState* play) {
     }
     Panel_PollTouch();
     Panel_UpdateTabs(canvasHeight);
+    // Touches on the strip belong to the tabs; pages only see touches that started above it
+    if (sTouch.startY >= STRIP_Y) {
+        sTouch.released = false;
+        sTouch.began = false;
+    }
     if (sPage == DUAL_SCREEN_PAGE_ITEMS) {
         Panel_UpdateEquipPage(play, 0);
     } else if (sPage == DUAL_SCREEN_PAGE_MASKS) {
@@ -1708,6 +1739,9 @@ void DualScreen_Update(PlayState* play) {
     } else if (sPage == DUAL_SCREEN_PAGE_STATUS) {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
         Panel_UpdateQuestLog(play);
+    } else if (sPage == DUAL_SCREEN_PAGE_MAP) {
+        sSelectedSlot = sDragSlot = sUseTarget = -1;
+        Panel_UpdateMapPage(play);
     } else {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
     }
@@ -1765,6 +1799,401 @@ static void Panel_End(Gfx* start, Gfx* gfx, GraphicsContext* gfxCtx) {
 // Frames since gameplay last drew the panels; the title page takes over once it's clearly gone
 static s32 sFramesSincePlayDraw = 0;
 
+// #region Map: the pause menu's world map, with Link's region and tap-to-warp owl statues
+
+// Pause menu world map data (z_kaleido_map.c, z_kaleido_scope_NES.c, ShipUtils.cpp)
+extern TexturePtr sCloudTextures[];
+extern s16 sVtxPageMapWorldQuadsX[];
+extern s16 sVtxPageMapWorldQuadsY[];
+extern s16 gVtxPageMapWorldQuadsWidth[];
+extern s16 gVtxPageMapWorldQuadsHeight[];
+extern u16 sOwlWarpEntrancesForMods[];
+extern s32 gHorseIsMounted;
+
+// Index ranges in the tables above: 15 clouds, then 11 regions, then 10 owl statues
+#define MAP_QUAD_CLOUDS 0
+#define MAP_QUAD_REGIONS 15
+#define MAP_QUAD_OWLS 26
+#define MAP_NUM_CLOUDS 15
+#define MAP_NUM_OWLS 10
+
+// The 216x128 image's top-left corner in pause coordinates (y points up)
+#define MAP_IMAGE_W 216
+#define MAP_IMAGE_H 128
+#define MAP_IMAGE_X0 (-109)
+#define MAP_IMAGE_Y0 59
+
+#define MAP_X 20
+#define MAP_Y 12
+#define MAP_W 600
+#define MAP_H (MAP_W * MAP_IMAGE_H / MAP_IMAGE_W)
+#define MAP_INFO_Y (MAP_Y + MAP_H + 10)
+#define MAP_OWL_W 48
+#define MAP_OWL_H 24
+#define MAP_WARP_BTN_X 470
+#define MAP_WARP_BTN_W 150
+
+static const char* sRegionNames[] = {
+    "Great Bay",       "Zora Hall",    "Romani Ranch",   "Deku Palace", "Woodfall",    "Clock Town",
+    "Snowhead",        "Ikana Graveyard", "Ikana Canyon", "Goron Village", "Stone Tower",
+};
+
+static const char* sOwlNames[] = {
+    "Great Bay Coast", "Zora Cape", "Snowhead",       "Mountain Village", "Clock Town",
+    "Milk Road",       "Woodfall",  "Southern Swamp", "Ikana Canyon",     "Stone Tower",
+};
+
+static s32 sSelectedOwl = -1;
+
+// #region Map view: zoom and pan, Google Maps style (pinch or the +/- buttons, drag to pan)
+
+#define MAP_ZOOM_MAX 4.0f
+#define MAP_BTN 44
+
+static f32 sMapZoom = 1.0f;
+// Centre of the view, in map image texels (= pause map units)
+static f32 sMapCenterU = MAP_IMAGE_W / 2;
+static f32 sMapCenterV = MAP_IMAGE_H / 2;
+static f32 sMapDragX;
+static f32 sMapDragY;
+static f32 sMapPinchDist = 0.0f;
+
+static f32 Panel_MapVisW(void) {
+    return MAP_IMAGE_W / sMapZoom;
+}
+
+static f32 Panel_MapVisH(void) {
+    return MAP_IMAGE_H / sMapZoom;
+}
+
+// Keeps the view inside the image
+static void Panel_MapClampView(void) {
+    sMapZoom = CLAMP(sMapZoom, 1.0f, MAP_ZOOM_MAX);
+    sMapCenterU = CLAMP(sMapCenterU, Panel_MapVisW() / 2, MAP_IMAGE_W - Panel_MapVisW() / 2);
+    sMapCenterV = CLAMP(sMapCenterV, Panel_MapVisH() / 2, MAP_IMAGE_H - Panel_MapVisH() / 2);
+}
+
+static f32 Panel_MapLeft(void) {
+    return sMapCenterU - Panel_MapVisW() / 2;
+}
+
+static f32 Panel_MapTop(void) {
+    return sMapCenterV - Panel_MapVisH() / 2;
+}
+
+static s32 Panel_MapX(s32 pauseX) {
+    return MAP_X + (s32)(((pauseX - MAP_IMAGE_X0) - Panel_MapLeft()) * MAP_W / Panel_MapVisW());
+}
+
+static s32 Panel_MapY(s32 pauseY) {
+    return MAP_Y + (s32)(((MAP_IMAGE_Y0 - pauseY) - Panel_MapTop()) * MAP_H / Panel_MapVisH());
+}
+
+// Zooms by a factor while keeping the texel under (screenX, screenY) where it is
+static void Panel_MapZoomAt(f32 factor, f32 screenX, f32 screenY) {
+    f32 u = Panel_MapLeft() + (screenX - MAP_X) * Panel_MapVisW() / MAP_W;
+    f32 v = Panel_MapTop() + (screenY - MAP_Y) * Panel_MapVisH() / MAP_H;
+
+    sMapZoom = CLAMP(sMapZoom * factor, 1.0f, MAP_ZOOM_MAX);
+    sMapCenterU = u - (screenX - MAP_X) * Panel_MapVisW() / MAP_W + Panel_MapVisW() / 2;
+    sMapCenterV = v - (screenY - MAP_Y) * Panel_MapVisH() / MAP_H + Panel_MapVisH() / 2;
+    Panel_MapClampView();
+}
+
+static s32 Panel_InMap(f32 x, f32 y) {
+    return Panel_InRect(x, y, MAP_X, MAP_Y, MAP_W, MAP_H);
+}
+
+// #endregion
+
+// Centre of one of the pause map's quads on the panel
+static void Panel_MapQuadCenter(s32 quad, s32* x, s32* y) {
+    *x = Panel_MapX(sVtxPageMapWorldQuadsX[quad] + gVtxPageMapWorldQuadsWidth[quad] / 2);
+    *y = Panel_MapY(sVtxPageMapWorldQuadsY[quad] - gVtxPageMapWorldQuadsHeight[quad] / 2);
+}
+
+static s32 Panel_CurrentRegion(PlayState* play) {
+    s32 i;
+    s32 j;
+
+    for (i = 0; i < REGION_MAX; i++) {
+        for (j = 0; gSceneIdsPerRegion[i][j] != 0xFFFF; j++) {
+            if (gSceneIdsPerRegion[i][j] == play->sceneId) {
+                return i;
+            }
+        }
+    }
+    return -1;
+}
+
+static s32 Panel_OwlActive(s32 owl) {
+    return (gSaveContext.save.saveInfo.playerData.owlActivationFlags & (1 << owl)) != 0;
+}
+
+// Why an owl warp can't happen right now, or NULL if it can
+static const char* Panel_OwlWarpBlocked(PlayState* play) {
+    if (!CHECK_QUEST_ITEM(QUEST_SONG_SOARING) || (INV_CONTENT(ITEM_OCARINA_OF_TIME) != ITEM_OCARINA_OF_TIME)) {
+        return "Learn the Song of Soaring to fly here.";
+    }
+    if ((play->interfaceCtx.restrictions.songOfSoaring != 0) || (play->pauseCtx.state != PAUSE_STATE_OFF) ||
+        (play->msgCtx.msgMode != MSGMODE_NONE) || Player_InCsMode(play) ||
+        (play->transitionTrigger != TRANS_TRIGGER_OFF)) {
+        return "You can't warp from here right now.";
+    }
+    return NULL;
+}
+
+// Same steps as 2S2H's pause menu owl warp, without playing the song
+static void Panel_OwlWarp(PlayState* play, s32 owl) {
+    Player* player = GET_PLAYER(play);
+
+    // Leave Epona where she is instead of bringing her along
+    if (gHorseIsMounted && (player->stateFlags1 & PLAYER_STATE1_800000) && (player->rideActor != NULL)) {
+        if (CHECK_QUEST_ITEM(QUEST_SONG_EPONA)) {
+            gSaveContext.save.saveInfo.horseData.sceneId = play->sceneId;
+            gSaveContext.save.saveInfo.horseData.pos.x = player->rideActor->world.pos.x;
+            gSaveContext.save.saveInfo.horseData.pos.y = player->rideActor->world.pos.y;
+            gSaveContext.save.saveInfo.horseData.pos.z = player->rideActor->world.pos.z;
+            gSaveContext.save.saveInfo.horseData.yaw = player->rideActor->shape.rot.y;
+        }
+        gHorseIsMounted = false;
+    }
+    CLEAR_EVENTINF(EVENTINF_41);
+    Audio_PlaySfx(NA_SE_SY_DECIDE);
+    play->nextEntrance = sOwlWarpEntrancesForMods[owl];
+    play->transitionTrigger = TRANS_TRIGGER_START;
+    play->transitionType = TRANS_TYPE_FADE_WHITE;
+    sSelectedOwl = -1;
+}
+
+#define MAP_BTN_X (MAP_X + MAP_W - MAP_BTN - 8)
+#define MAP_BTN_Y(i) (MAP_Y + 8 + (i) * (MAP_BTN + 8))
+
+static void Panel_UpdateMapView(PlayState* play) {
+    // Pinch: zoom around the point between the fingers
+    if (sTouch.down && (sTouch.pointers >= 2) && Panel_InMap(sTouch.startX, sTouch.startY)) {
+        f32 dx = sTouch.x2 - sTouch.x;
+        f32 dy = sTouch.y2 - sTouch.y;
+        f32 dist = sqrtf(dx * dx + dy * dy);
+
+        if ((sMapPinchDist > 0.0f) && (dist > 1.0f)) {
+            Panel_MapZoomAt(dist / sMapPinchDist, (sTouch.x + sTouch.x2) / 2, (sTouch.y + sTouch.y2) / 2);
+        }
+        sMapPinchDist = dist;
+        sMapDragX = sTouch.x;
+        sMapDragY = sTouch.y;
+        return;
+    }
+    sMapPinchDist = 0.0f;
+
+    // One finger: drag the map
+    if (sTouch.began) {
+        sMapDragX = sTouch.startX;
+        sMapDragY = sTouch.startY;
+    }
+    if (sTouch.down && sTouch.moved && Panel_InMap(sTouch.startX, sTouch.startY)) {
+        sMapCenterU -= (sTouch.x - sMapDragX) * Panel_MapVisW() / MAP_W;
+        sMapCenterV -= (sTouch.y - sMapDragY) * Panel_MapVisH() / MAP_H;
+        Panel_MapClampView();
+    }
+    sMapDragX = sTouch.x;
+    sMapDragY = sTouch.y;
+}
+
+static void Panel_UpdateMapPage(PlayState* play) {
+    s32 owl;
+
+    Panel_UpdateMapView(play);
+    if (Panel_Tapped(MAP_BTN_X, MAP_BTN_Y(0), MAP_BTN, MAP_BTN)) {
+        Panel_MapZoomAt(1.5f, MAP_X + MAP_W / 2, MAP_Y + MAP_H / 2);
+        Audio_PlaySfx(NA_SE_SY_CURSOR);
+        return;
+    }
+    if (Panel_Tapped(MAP_BTN_X, MAP_BTN_Y(1), MAP_BTN, MAP_BTN)) {
+        Panel_MapZoomAt(1.0f / 1.5f, MAP_X + MAP_W / 2, MAP_Y + MAP_H / 2);
+        Audio_PlaySfx(NA_SE_SY_CURSOR);
+        return;
+    }
+    if (Panel_Tapped(MAP_BTN_X, MAP_BTN_Y(2), MAP_BTN, MAP_BTN)) {
+        // Recentre on Link, zooming in if the whole map is showing
+        s32 region = Panel_CurrentRegion(play);
+
+        if (region >= 0) {
+            s32 quad = MAP_QUAD_REGIONS + region;
+
+            sMapZoom = MAX(sMapZoom, 2.0f);
+            sMapCenterU = sVtxPageMapWorldQuadsX[quad] + gVtxPageMapWorldQuadsWidth[quad] / 2 - MAP_IMAGE_X0;
+            sMapCenterV = MAP_IMAGE_Y0 - (sVtxPageMapWorldQuadsY[quad] - gVtxPageMapWorldQuadsHeight[quad] / 2);
+            Panel_MapClampView();
+        }
+        Audio_PlaySfx(NA_SE_SY_CURSOR);
+        return;
+    }
+
+    if ((sSelectedOwl >= 0) && Panel_Tapped(MAP_WARP_BTN_X, MAP_INFO_Y, MAP_WARP_BTN_W, 44)) {
+        if (Panel_OwlWarpBlocked(play) == NULL) {
+            Panel_OwlWarp(play, sSelectedOwl);
+        } else {
+            Audio_PlaySfx(NA_SE_SY_ERROR);
+        }
+        return;
+    }
+    for (owl = 0; owl < MAP_NUM_OWLS; owl++) {
+        s32 x;
+        s32 y;
+
+        Panel_MapQuadCenter(MAP_QUAD_OWLS + owl, &x, &y);
+        if (Panel_OwlActive(owl) && Panel_InMap(x, y) && Panel_Tapped(x - MAP_OWL_W / 2 - 6, y - MAP_OWL_H / 2 - 10, MAP_OWL_W + 12,
+                                                 MAP_OWL_H + 20)) {
+            sSelectedOwl = (sSelectedOwl == owl) ? -1 : owl;
+            Audio_PlaySfx(NA_SE_SY_CURSOR);
+            return;
+        }
+    }
+}
+
+static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play) {
+    s32 i;
+    s32 x;
+    s32 y;
+    s32 region = Panel_CurrentRegion(play);
+    s32 pulse = 140 + (s32)(Math_SinS(play->state.frames * 0x1000) * 110.0f);
+
+    // The map itself: a paletted image, loaded whole like 2S2H's HD-aware pause menu does
+    gDPPipeSync(gfx++);
+    gDPSetCombineMode(gfx++, G_CC_MODULATEIDECALA_PRIM, G_CC_MODULATEIDECALA_PRIM);
+    gDPSetRenderMode(gfx++, G_RM_XLU_SURF, G_RM_XLU_SURF2);
+    gDPSetPrimColor(gfx++, 0, 0, 255, 255, 255, 255);
+    gDPLoadTLUT_pal256(gfx++, gWorldMapImageTLUT);
+    gDPSetTextureLUT(gfx++, G_TT_RGBA16);
+    gDPLoadMultiTile(gfx++, gWorldMapImageTex, 0, G_TX_RENDERTILE, G_IM_FMT_CI, G_IM_SIZ_8b, MAP_IMAGE_W, MAP_IMAGE_H,
+                     0, 0, MAP_IMAGE_W - 1, MAP_IMAGE_H - 1, 0, G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMIRROR | G_TX_CLAMP,
+                     G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    gDPSetTileSize(gfx++, G_TX_RENDERTILE, 0, 0, (MAP_IMAGE_W - 1) << G_TEXTURE_IMAGE_FRAC,
+                   (MAP_IMAGE_H - 1) << G_TEXTURE_IMAGE_FRAC);
+    // Only the part of the image in view: start texel and texels-per-unit from the zoom
+    gSPWideTextureRectangle(gfx++, MAP_X << 2, MAP_Y << 2, (MAP_X + MAP_W) << 2, (MAP_Y + MAP_H) << 2,
+                            G_TX_RENDERTILE, (s32)(Panel_MapLeft() * 32.0f), (s32)(Panel_MapTop() * 32.0f),
+                            (s32)(Panel_MapVisW() * 1024.0f / MAP_W), (s32)(Panel_MapVisH() * 1024.0f / MAP_H));
+    gDPPipeSync(gfx++);
+    gDPSetTextureLUT(gfx++, G_TT_NONE);
+
+    // Everything on the map is clipped to it while zoomed
+    gDPSetScissor(gfx++, G_SC_NON_INTERLACE, MAP_X, MAP_Y, MAP_X + MAP_W, MAP_Y + MAP_H);
+
+    // Clouds over regions whose Tingle map you haven't bought, in the pause menu's colours
+    gDPSetCombineLERP(gfx++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0, PRIMITIVE,
+                      ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
+    gDPSetPrimColor(gfx++, 0, 0, 215, 235, 235, 255);
+    gDPSetEnvColor(gfx++, 40, 60, 100, 0);
+    for (i = 0; i < MAP_NUM_CLOUDS; i++) {
+        s32 quad = MAP_QUAD_CLOUDS + i;
+        s32 texW = gVtxPageMapWorldQuadsWidth[quad];
+        s32 texH = gVtxPageMapWorldQuadsHeight[quad];
+        s32 w;
+        s32 h;
+
+        if (gSaveContext.save.saveInfo.worldMapCloudVisibility & gBitFlags[i]) {
+            continue;
+        }
+        x = Panel_MapX(sVtxPageMapWorldQuadsX[quad]);
+        y = Panel_MapY(sVtxPageMapWorldQuadsY[quad]);
+        w = Panel_MapX(sVtxPageMapWorldQuadsX[quad] + texW) - x;
+        h = Panel_MapY(sVtxPageMapWorldQuadsY[quad] - texH) - y;
+        gDPLoadTextureBlock(gfx++, sCloudTextures[i], G_IM_FMT_IA, G_IM_SIZ_8b, texW, texH, 0,
+                            G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK,
+                            G_TX_NOLOD, G_TX_NOLOD);
+        gSPWideTextureRectangle(gfx++, x << 2, y << 2, (x + w) << 2, (y + h) << 2, G_TX_RENDERTILE, 0, 0,
+                                (texW << 10) / MAX(w, 1), (texH << 10) / MAX(h, 1));
+    }
+
+    // Link's region, pulsing
+    if (region >= 0) {
+        Panel_MapQuadCenter(MAP_QUAD_REGIONS + region, &x, &y);
+    }
+    if ((region >= 0) && Panel_InMap(x, y)) {
+        gfx = Panel_SetTexturedMode(gfx, 255, 60, 40, pulse);
+        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, x - 14, y - 14, 28, 28);
+        gfx = Panel_SetTexturedMode(gfx, 255, 240, 220, 255);
+        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, x - 6, y - 6, 12, 12);
+    }
+
+    // Owl statues you've activated; the picked one gets the gold ring
+    for (i = 0; i < MAP_NUM_OWLS; i++) {
+        if (!Panel_OwlActive(i)) {
+            continue;
+        }
+        Panel_MapQuadCenter(MAP_QUAD_OWLS + i, &x, &y);
+        if (!Panel_InMap(x, y)) {
+            continue;
+        }
+        if (i == sSelectedOwl) {
+            gfx = Panel_SetTexturedMode(gfx, 255, 200, 60, pulse);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, x - 34, y - 34, 68, 68);
+        }
+        gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+        gfx = Panel_DrawTexRGBA32(gfx, gWorldMapOwlFaceTex, 24, 12, x - MAP_OWL_W / 2, y - MAP_OWL_H / 2, MAP_OWL_W,
+                                  MAP_OWL_H);
+    }
+
+    gDPPipeSync(gfx++);
+    gDPSetScissor(gfx++, G_SC_NON_INTERLACE, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, DualScreen_GetCanvasHeight());
+
+    // Zoom in, zoom out and recentre on Link, stacked in the map's corner
+    for (i = 0; i < 3; i++) {
+        static const char* sMapButtonLabels[] = { "+", "-", "" };
+        s32 pressed = Panel_Pressing(MAP_BTN_X, MAP_BTN_Y(i), MAP_BTN, MAP_BTN);
+
+        gfx = Panel_SetTexturedMode(gfx, 255, 245, 215, pressed ? 255 : 220);
+        gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, MAP_BTN_X, MAP_BTN_Y(i), MAP_BTN,
+                              MAP_BTN);
+        if (i < 2) {
+            gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+            gfx = Panel_DrawText(gfx, sMapButtonLabels[i],
+                                 MAP_BTN_X + (MAP_BTN - Panel_TextWidth(sMapButtonLabels[i], 1, 1.6f)) / 2 - 1,
+                                 MAP_BTN_Y(i) + 7, 1.6f);
+        } else {
+            // Recentre: the same red dot that marks Link
+            gfx = Panel_SetTexturedMode(gfx, 255, 60, 40, 255);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, MAP_BTN_X + 12, MAP_BTN_Y(i) + 11,
+                                  20, 20);
+            gfx = Panel_SetTexturedMode(gfx, 255, 240, 220, 255);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, MAP_BTN_X + 18, MAP_BTN_Y(i) + 17,
+                                  8, 8);
+        }
+    }
+
+    // Below the map: where Link is, or the picked owl and its warp button
+    gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+    if (sSelectedOwl < 0) {
+        gfx = Panel_DrawText(gfx, (region >= 0) ? sRegionNames[region] : "Termina", 20, MAP_INFO_Y + 4, 1.2f);
+        gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
+        gfx = Panel_DrawText(gfx,
+                             (gSaveContext.save.saveInfo.playerData.owlActivationFlags != 0)
+                                 ? "Tap an owl statue to fly there."
+                                 : "Strike owl statues to mark them on this map.",
+                             20, MAP_INFO_Y + 32, LOG_SMALL);
+    } else {
+        const char* blocked = Panel_OwlWarpBlocked(play);
+
+        gfx = Panel_DrawText(gfx, sOwlNames[sSelectedOwl], 20, MAP_INFO_Y + 4, 1.2f);
+        if (blocked != NULL) {
+            gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
+            gfx = Panel_DrawText(gfx, blocked, 20, MAP_INFO_Y + 32, LOG_SMALL);
+        }
+        gfx = Panel_FillRect(gfx, MAP_WARP_BTN_X, MAP_INFO_Y, MAP_WARP_BTN_W, 44, 120, 80, 30,
+                             (blocked != NULL) ? 50 : (Panel_Pressing(MAP_WARP_BTN_X, MAP_INFO_Y, MAP_WARP_BTN_W, 44)
+                                                           ? 230
+                                                           : 160));
+        gfx = Panel_SetSilhouetteMode(gfx, 255, 245, 210, (blocked != NULL) ? 120 : 255);
+        gfx = Panel_DrawText(gfx, "Warp", MAP_WARP_BTN_X + (MAP_WARP_BTN_W - Panel_TextWidth("Warp", 8, 1.2f)) / 2,
+                             MAP_INFO_Y + 10, 1.2f);
+    }
+    return gfx;
+}
+
+// #endregion
+
 // Every page once, behind the real one, over the first frames: uploads all their textures up front so the
 // first visit to a tab doesn't stall the game (and the audio) while textures load
 typedef enum PanelWarmup {
@@ -1775,6 +2204,7 @@ typedef enum PanelWarmup {
     WARMUP_LOG_MASKS,
     WARMUP_LOG_COLLECT,
     WARMUP_NOTEBOOK,
+    WARMUP_MAP,
     WARMUP_DONE
 } PanelWarmup;
 
@@ -1800,8 +2230,11 @@ static Gfx* Panel_DrawWarmupPage(Gfx* gfx, PlayState* play, s32 canvasHeight) {
             gfx = Panel_DrawQuestLog(gfx);
             sQuestLogView = view;
             break;
-        default:
+        case WARMUP_NOTEBOOK:
             gfx = Panel_DrawNotebook(gfx, canvasHeight);
+            break;
+        default:
+            gfx = Panel_DrawMapPage(gfx, play);
             break;
     }
     sWarmupStep++;
@@ -1830,6 +2263,8 @@ void DualScreen_Draw(PlayState* play) {
         gfx = Panel_DrawEquipPage(gfx, play, ITEM_NUM_SLOTS);
     } else if (sPage == DUAL_SCREEN_PAGE_QUEST) {
         gfx = Panel_DrawQuestPage(gfx);
+    } else if (sPage == DUAL_SCREEN_PAGE_MAP) {
+        gfx = Panel_DrawMapPage(gfx, play);
     } else if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {
         gfx = Panel_DrawNotebook(gfx, canvasHeight);
     } else {

@@ -130,18 +130,17 @@ extern "C" uint8_t DualScreen_PollTouch(DualScreenTouchEvent* event) {
     return 1;
 }
 
-static void PushTouch(int32_t type, float x, float y) {
+static void PushTouch(int32_t type, float x, float y, float x2, float y2, int32_t pointers) {
     std::lock_guard<std::mutex> lock(sTouchMutex);
     if (type == DUAL_SCREEN_TOUCH_MOVE && !sTouchQueue.empty() && sTouchQueue.back().type == DUAL_SCREEN_TOUCH_MOVE) {
         // Only the latest position of a drag matters
-        sTouchQueue.back().x = x;
-        sTouchQueue.back().y = y;
+        sTouchQueue.back() = { type, x, y, x2, y2, pointers };
         return;
     }
     if (sTouchQueue.size() >= kTouchQueueMax) {
         sTouchQueue.pop_front();
     }
-    sTouchQueue.push_back({ type, x, y });
+    sTouchQueue.push_back({ type, x, y, x2, y2, pointers });
 }
 
 #if defined(__ANDROID__)
@@ -449,23 +448,23 @@ extern "C" JNIEXPORT void JNICALL Java_com_twoshipfork_mm_MainActivity_nativeDua
     sPresent.pendingDestroy = true;
 }
 
-extern "C" JNIEXPORT void JNICALL Java_com_twoshipfork_mm_MainActivity_nativeDualScreenTouch(JNIEnv* env,
-                                                                                             jclass clazz,
-                                                                                             jint action, jfloat x,
-                                                                                             jfloat y) {
-    // MotionEvent actions: DOWN 0, UP 1, MOVE 2, CANCEL 3
-    float canvasX = x * DUAL_SCREEN_CANVAS_WIDTH;
-    float canvasY = y * DualScreen_GetCanvasHeight();
+extern "C" JNIEXPORT void JNICALL Java_com_twoshipfork_mm_MainActivity_nativeDualScreenTouch(
+    JNIEnv* env, jclass clazz, jint action, jfloat x, jfloat y, jfloat x2, jfloat y2, jint pointers) {
+    // MotionEvent actions: DOWN 0, UP 1, MOVE 2, CANCEL 3, POINTER_DOWN 5, POINTER_UP 6
+    float h = (float)DualScreen_GetCanvasHeight();
+    float w = (float)DUAL_SCREEN_CANVAS_WIDTH;
     switch (action) {
         case 0:
-            PushTouch(DUAL_SCREEN_TOUCH_DOWN, canvasX, canvasY);
+            PushTouch(DUAL_SCREEN_TOUCH_DOWN, x * w, y * h, x2 * w, y2 * h, pointers);
             break;
         case 2:
-            PushTouch(DUAL_SCREEN_TOUCH_MOVE, canvasX, canvasY);
+        case 5:
+        case 6:
+            PushTouch(DUAL_SCREEN_TOUCH_MOVE, x * w, y * h, x2 * w, y2 * h, pointers);
             break;
         case 1:
         case 3:
-            PushTouch(DUAL_SCREEN_TOUCH_UP, canvasX, canvasY);
+            PushTouch(DUAL_SCREEN_TOUCH_UP, x * w, y * h, x2 * w, y2 * h, pointers);
             break;
     }
 }

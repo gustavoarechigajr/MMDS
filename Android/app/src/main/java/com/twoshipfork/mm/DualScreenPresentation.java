@@ -51,7 +51,14 @@ public class DualScreenPresentation extends Presentation {
         surfaceView.setOnTouchListener((View v, MotionEvent e) -> {
             int w = Math.max(1, v.getWidth());
             int h = Math.max(1, v.getHeight());
-            MainActivity.nativeDualScreenTouch(e.getActionMasked(), e.getX() / w, e.getY() / h);
+            // The first two fingers, for pinch zoom; the second is only meaningful when pointers >= 2
+            int pointers = e.getPointerCount();
+            if (e.getActionMasked() == MotionEvent.ACTION_POINTER_UP) {
+                pointers--; // The lifted finger is still counted in this event
+            }
+            float x2 = pointers >= 2 ? e.getX(1) / w : 0.0f;
+            float y2 = pointers >= 2 ? e.getY(1) / h : 0.0f;
+            MainActivity.nativeDualScreenTouch(e.getActionMasked(), e.getX(0) / w, e.getY(0) / h, x2, y2, pointers);
             return true;
         });
         setContentView(surfaceView);
