@@ -14,6 +14,7 @@ extern "C" {
 typedef enum DualScreenPage {
     DUAL_SCREEN_PAGE_ITEMS,
     DUAL_SCREEN_PAGE_MASKS,
+    DUAL_SCREEN_PAGE_QUEST,
     DUAL_SCREEN_PAGE_NOTEBOOK,
     DUAL_SCREEN_PAGE_STATUS,
     DUAL_SCREEN_PAGE_MAX
@@ -38,6 +39,9 @@ int32_t DualScreen_GetFrameBufferId(void);
 int32_t DualScreen_GetCanvasHeight(void);
 // Pops the oldest queued touch event; returns 0 when the queue is empty
 uint8_t DualScreen_PollTouch(DualScreenTouchEvent* event);
+// Plays an ocarina song: for the next few frames C-Left counts as the ocarina, and the staff that opens
+// plays this song back on its own (the same path as 2S2H's Song Items). The caller presses C-Left.
+void DualScreen_RequestSong(uint8_t song);
 // Copies the panel framebuffer onto the secondary display; called after the frame is rendered
 void DualScreen_PresentFrame(void);
 

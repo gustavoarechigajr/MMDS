@@ -407,8 +407,9 @@ typedef struct PanelTab {
 static PanelTab sTabs[] = {
     { DUAL_SCREEN_PAGE_ITEMS, ITEM_OCARINA_OF_TIME },
     { DUAL_SCREEN_PAGE_MASKS, ITEM_MASK_DEKU },
+    { DUAL_SCREEN_PAGE_QUEST, ITEM_REMAINS_ODOLWA },
     { DUAL_SCREEN_PAGE_NOTEBOOK, ITEM_BOMBERS_NOTEBOOK },
-    { DUAL_SCREEN_PAGE_STATUS, ITEM_REMAINS_ODOLWA },
+    { DUAL_SCREEN_PAGE_STATUS, ITEM_WALLET_GIANT },
 };
 
 static s32 Panel_TabAvailable(s32 page) {
@@ -909,6 +910,186 @@ static Gfx* Panel_DrawEquipPage(Gfx* gfx, PlayState* play, s32 firstSlot) {
 
 // #endregion
 
+// #region Quest: remains, gear and the music guide
+
+#define QUEST_ICON 56
+#define QUEST_ROW_Y 14
+#define SONG_TOP 100
+#define SONG_ROW_H 62
+#define SONG_COL_W 304
+#define SONG_NOTE 30
+#define SONG_NOTE_ADVANCE 32
+
+typedef struct PanelSong {
+    u8 song; // OCARINA_SONG_*
+    u8 r;
+    u8 g;
+    u8 b;
+} PanelSong;
+
+// Two columns: the songs of time and travel, then the songs that wake each region
+static PanelSong sPanelSongs[] = {
+    { OCARINA_SONG_TIME, 255, 255, 255 },          { OCARINA_SONG_STORMS, 255, 255, 255 },
+    { OCARINA_SONG_INVERTED_TIME, 255, 255, 255 }, { OCARINA_SONG_SONATA, 150, 255, 100 },
+    { OCARINA_SONG_DOUBLE_TIME, 255, 255, 255 },   { OCARINA_SONG_GORON_LULLABY, 255, 80, 40 },
+    { OCARINA_SONG_HEALING, 255, 255, 255 },       { OCARINA_SONG_NEW_WAVE, 100, 150, 255 },
+    { OCARINA_SONG_SOARING, 255, 255, 255 },       { OCARINA_SONG_ELEGY, 255, 160, 0 },
+    { OCARINA_SONG_EPONAS, 255, 255, 255 },        { OCARINA_SONG_OATH, 255, 100, 255 },
+};
+
+// Which song (if any) can be played for this row: Inverted and Double Time come with the Song of Time, and
+// the Goron Lullaby can be its intro until the whole song is learned
+static s32 Panel_LearnedSong(u8 song) {
+    if ((song == OCARINA_SONG_INVERTED_TIME) || (song == OCARINA_SONG_DOUBLE_TIME)) {
+        return CHECK_QUEST_ITEM(QUEST_SONG_TIME) ? song : -1;
+    }
+    if (CHECK_QUEST_ITEM(QUEST_SONG_SONATA + song)) {
+        return song;
+    }
+    if ((song == OCARINA_SONG_GORON_LULLABY) && CHECK_QUEST_ITEM(QUEST_SONG_LULLABY_INTRO)) {
+        return OCARINA_SONG_GORON_LULLABY_INTRO;
+    }
+    return -1;
+}
+
+static void Panel_SongRowRect(s32 index, s32* x, s32* y) {
+    *x = 16 + (index % 2) * SONG_COL_W;
+    *y = SONG_TOP + (index / 2) * SONG_ROW_H;
+}
+
+static void Panel_UpdateQuestPage(PlayState* play) {
+    s32 i;
+
+    for (i = 0; i < ARRAY_COUNT(sPanelSongs); i++) {
+        s32 x;
+        s32 y;
+        s32 song;
+
+        Panel_SongRowRect(i, &x, &y);
+        if (!Panel_Tapped(x, y, SONG_COL_W - 8, SONG_ROW_H)) {
+            continue;
+        }
+        song = Panel_LearnedSong(sPanelSongs[i].song);
+        // Same moments the pause menu would let you take out the ocarina
+        if ((song < 0) || (INV_CONTENT(ITEM_OCARINA_OF_TIME) != ITEM_OCARINA_OF_TIME) ||
+            (play->pauseCtx.state != PAUSE_STATE_OFF) || (play->msgCtx.msgMode != MSGMODE_NONE) ||
+            Player_InCsMode(play) || (play->transitionTrigger != TRANS_TRIGGER_OFF)) {
+            Audio_PlaySfx(NA_SE_SY_ERROR);
+            return;
+        }
+        DualScreen_RequestSong(song);
+        play->state.input[0].press.button |= BTN_CLEFT;
+        play->state.input[0].cur.button |= BTN_CLEFT;
+        return;
+    }
+}
+
+// An ocarina note as the button you press for it: X / Y / RB letters for the C notes (from the button-letter
+// pack when it's installed), the A and C-Up glyphs otherwise
+static Gfx* Panel_DrawSongNote(Gfx* gfx, u8 button, s32 x, s32 y, u8 alpha) {
+    TexturePtr glyph;
+    s32 glyphSize = 32;
+
+    if (button == OCARINA_BTN_A) {
+        gfx = Panel_SetTexturedMode(gfx, 100, 200, 255, alpha);
+    } else {
+        gfx = Panel_SetTexturedMode(gfx, 255, 240, 0, alpha);
+    }
+    gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, x, y, SONG_NOTE, SONG_NOTE);
+
+    switch (button) {
+        case OCARINA_BTN_C_DOWN:
+            glyph = gEmptyCDownArrowTex;
+            break;
+        case OCARINA_BTN_C_RIGHT:
+            glyph = gEmptyCRightArrowTex;
+            break;
+        case OCARINA_BTN_C_LEFT:
+            glyph = gEmptyCLeftArrowTex;
+            break;
+        case OCARINA_BTN_C_UP:
+            glyph = gOcarinaCUpTex;
+            glyphSize = 16;
+            break;
+        default:
+            glyph = gOcarinaATex;
+            glyphSize = 16;
+            break;
+    }
+    if (glyphSize == 16) {
+        gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, alpha);
+        return Panel_DrawTex8b(gfx, glyph, G_IM_FMT_IA, 16, 16, x + 5, y + 5, SONG_NOTE - 10, SONG_NOTE - 10);
+    }
+    return Panel_DrawTex8b(gfx, glyph, G_IM_FMT_IA, 32, 32, x, y, SONG_NOTE, SONG_NOTE);
+}
+
+static Gfx* Panel_DrawQuestIcon(Gfx* gfx, s32 item, s32 x, s32 y) {
+    gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, (item < 0) ? 35 : 70);
+    gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, x - 2, y - 2, QUEST_ICON + 4,
+                          QUEST_ICON + 4);
+    if (item >= 0) {
+        gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+        gfx = Panel_DrawItemIcon(gfx, item, x + QUEST_ICON / 2, y + QUEST_ICON / 2, QUEST_ICON);
+    }
+    return gfx;
+}
+
+static Gfx* Panel_DrawQuestPage(Gfx* gfx) {
+    s32 i;
+    s32 x = 16;
+    s32 value;
+
+    // Boss remains, then the gear the pause menu's quest page shows
+    for (i = 0; i < 4; i++, x += QUEST_ICON + 6) {
+        gfx = Panel_DrawQuestIcon(gfx, CHECK_QUEST_ITEM(QUEST_REMAINS_ODOLWA + i) ? ITEM_REMAINS_ODOLWA + i : -1, x,
+                                  QUEST_ROW_Y);
+    }
+    x += 18;
+    value = GET_CUR_EQUIP_VALUE(EQUIP_TYPE_SWORD);
+    gfx = Panel_DrawQuestIcon(gfx, (value != EQUIP_VALUE_SWORD_NONE) ? ITEM_SWORD_KOKIRI + value - 1 : -1, x,
+                              QUEST_ROW_Y);
+    x += QUEST_ICON + 6;
+    value = GET_CUR_EQUIP_VALUE(EQUIP_TYPE_SHIELD);
+    gfx = Panel_DrawQuestIcon(gfx, (value != EQUIP_VALUE_SHIELD_NONE) ? ITEM_SHIELD_HERO + value - 1 : -1, x,
+                              QUEST_ROW_Y);
+    x += QUEST_ICON + 6;
+    value = CUR_UPG_VALUE(UPG_QUIVER);
+    gfx = Panel_DrawQuestIcon(gfx, (value != 0) ? ITEM_QUIVER_30 + value - 1 : -1, x, QUEST_ROW_Y);
+    x += QUEST_ICON + 6;
+    value = CUR_UPG_VALUE(UPG_BOMB_BAG);
+    gfx = Panel_DrawQuestIcon(gfx, (value != 0) ? ITEM_BOMB_BAG_20 + value - 1 : -1, x, QUEST_ROW_Y);
+    x += QUEST_ICON + 6;
+    gfx = Panel_DrawQuestIcon(gfx, ITEM_WALLET_DEFAULT + CUR_UPG_VALUE(UPG_WALLET), x, QUEST_ROW_Y);
+
+    gfx = Panel_FillRect(gfx, 20, SONG_TOP - 14, DUAL_SCREEN_CANVAS_WIDTH - 40, 2, 90, 50, 20, 120);
+
+    // The music guide: each learned song written out in the buttons that play it; tap one to play it
+    for (i = 0; i < ARRAY_COUNT(sPanelSongs); i++) {
+        PanelSong* entry = &sPanelSongs[i];
+        s32 song = Panel_LearnedSong(entry->song);
+        s32 rowX;
+        s32 rowY;
+        s32 n;
+
+        Panel_SongRowRect(i, &rowX, &rowY);
+        if (Panel_Pressing(rowX, rowY, SONG_COL_W - 8, SONG_ROW_H) && (song >= 0)) {
+            gfx = Panel_FillRect(gfx, rowX, rowY + 4, SONG_COL_W - 8, SONG_ROW_H - 8, 255, 200, 60, 90);
+        }
+        gfx = Panel_SetTexturedMode(gfx, entry->r, entry->g, entry->b, (song >= 0) ? 255 : 50);
+        gfx = Panel_DrawTex8b(gfx, gItemIconSongNoteTex, G_IM_FMT_IA, 16, 24, rowX + 4, rowY + 12, 26, 39);
+        if (song < 0) {
+            continue;
+        }
+        for (n = 0; n < gOcarinaSongButtons[song].numButtons; n++) {
+            gfx = Panel_DrawSongNote(gfx, gOcarinaSongButtons[song].buttonIndex[n],
+                                     rowX + 40 + n * SONG_NOTE_ADVANCE, rowY + (SONG_ROW_H - SONG_NOTE) / 2, 255);
+        }
+    }
+    return gfx;
+}
+
+// #endregion
+
 void DualScreen_Update(PlayState* play) {
     s32 canvasHeight = DualScreen_GetCanvasHeight();
 
@@ -921,6 +1102,9 @@ void DualScreen_Update(PlayState* play) {
         Panel_UpdateEquipPage(play, 0);
     } else if (sPage == DUAL_SCREEN_PAGE_MASKS) {
         Panel_UpdateEquipPage(play, ITEM_NUM_SLOTS);
+    } else if (sPage == DUAL_SCREEN_PAGE_QUEST) {
+        sSelectedSlot = sDragSlot = sUseTarget = -1;
+        Panel_UpdateQuestPage(play);
     } else {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
     }
@@ -982,6 +1166,8 @@ void DualScreen_Draw(PlayState* play) {
         gfx = Panel_DrawEquipPage(gfx, play, 0);
     } else if (sPage == DUAL_SCREEN_PAGE_MASKS) {
         gfx = Panel_DrawEquipPage(gfx, play, ITEM_NUM_SLOTS);
+    } else if (sPage == DUAL_SCREEN_PAGE_QUEST) {
+        gfx = Panel_DrawQuestPage(gfx);
     } else if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {
         gfx = Panel_DrawNotebook(gfx, canvasHeight);
     } else {

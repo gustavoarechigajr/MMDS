@@ -12,6 +12,13 @@
 #include <fast/Fast3dWindow.h>
 #include <fast/interpreter.h>
 #include <libultraship/bridge/consolevariablebridge.h>
+#include "2s2h/GameInteractor/GameInteractor.h"
+#include "2s2h/ShipInit.hpp"
+
+extern "C" {
+#include "z64.h"
+void Message_ResetOcarinaButtonAlphas(void);
+}
 
 #include <atomic>
 #include <deque>
@@ -64,6 +71,53 @@ extern "C" int32_t DualScreen_GetFrameBufferId(void) {
     }
     return sFrameBufferId;
 }
+
+// #region Songs played from the touch screen
+
+namespace {
+constexpr uint8_t kNoSong = 0xFF;
+// Long enough for Link to pull out the ocarina; cleared early once the staff takes the song
+constexpr int32_t kSongRequestFrames = 20;
+uint8_t sRequestedSong = kNoSong;
+int32_t sSongRequestFramesLeft = 0;
+} // namespace
+
+extern "C" void DualScreen_RequestSong(uint8_t song) {
+    sRequestedSong = song;
+    sSongRequestFramesLeft = kSongRequestFrames;
+}
+
+static void RegisterDualScreenSongs() {
+    COND_VB_SHOULD(VB_GET_ITEM_ON_BUTTON, true, {
+        int32_t slot = va_arg(args, int);
+        ItemId* item = va_arg(args, ItemId*);
+
+        if (sSongRequestFramesLeft > 0 && slot == EQUIP_SLOT_C_LEFT) {
+            *item = ITEM_OCARINA_OF_TIME;
+        }
+    });
+
+    COND_VB_SHOULD(VB_OVERRIDE_OCARINA_STAFF_STATE, true, {
+        if (sRequestedSong != kNoSong && sSongRequestFramesLeft > 0) {
+            OcarinaStaff* staff = va_arg(args, OcarinaStaff*);
+            staff->state = sRequestedSong;
+            sRequestedSong = kNoSong;
+            sSongRequestFramesLeft = 0;
+            Message_ResetOcarinaButtonAlphas();
+            *should = true;
+        }
+    });
+
+    COND_HOOK(OnGameStateUpdate, true, []() {
+        if (sSongRequestFramesLeft > 0 && --sSongRequestFramesLeft == 0) {
+            sRequestedSong = kNoSong;
+        }
+    });
+}
+
+static RegisterShipInitFunc sDualScreenSongsInit(RegisterDualScreenSongs, {});
+
+// #endregion
 
 extern "C" uint8_t DualScreen_PollTouch(DualScreenTouchEvent* event) {
     std::lock_guard<std::mutex> lock(sTouchMutex);
