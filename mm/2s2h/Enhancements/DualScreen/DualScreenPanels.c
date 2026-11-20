@@ -30,6 +30,9 @@ void KaleidoScope_ApplyMaskEquip(PlayState* play);
 extern u8 gPlayerFormSlotRestrictions[PLAYER_FORM_MAX][ITEM_NUM_SLOTS];
 extern u8 sPlayerFormItems[PLAYER_FORM_MAX];
 extern u16 sMasksGivenOnMoonBits[];
+// The message box font (z_kanfont.c, z_message_nes.c)
+extern const char* fontTbl[];
+extern f32 sNESFontWidths[];
 #define CHECK_GIVEN_MASK_ON_MOON(maskIndex) \
     (gSaveContext.masksGivenOnMoon[sMasksGivenOnMoonBits[maskIndex] >> 8] & (u8)sMasksGivenOnMoonBits[maskIndex])
 
@@ -117,6 +120,86 @@ static Gfx* Panel_SetSilhouetteMode(Gfx* gfx, u8 r, u8 g, u8 b, u8 a) {
     gDPSetPrimColor(gfx++, 0, 0, r, g, b, a);
     return gfx;
 }
+
+// #region Text in the message-box font
+
+// Line height for a text scale, in canvas units (glyphs are 16x16)
+#define TEXT_LINE_H(scale) ((s32)(16.0f * (scale) + 3.0f))
+
+static f32 Panel_GlyphAdvance(char c, f32 scale) {
+    u8 index = (u8)c - ' ';
+    return ((u8)c < ' ' || index >= 160) ? 0.0f : sNESFontWidths[index] * scale;
+}
+
+static s32 Panel_TextWidth(const char* str, s32 len, f32 scale) {
+    f32 width = 0.0f;
+    s32 i;
+
+    for (i = 0; (i < len) && (str[i] != '\0'); i++) {
+        width += Panel_GlyphAdvance(str[i], scale);
+    }
+    return (s32)width;
+}
+
+// Draws up to len characters on one line; the colour comes from the current prim (silhouette mode)
+static Gfx* Panel_DrawTextN(Gfx* gfx, const char* str, s32 len, s32 x, s32 y, f32 scale) {
+    f32 penX = x;
+    s32 size = (s32)(16.0f * scale + 0.5f);
+    s32 i;
+
+    for (i = 0; (i < len) && (str[i] != '\0'); i++) {
+        u8 c = (u8)str[i];
+
+        if ((c > ' ') && (c - ' ' < 156)) {
+            gDPLoadTextureBlock_4b(gfx++, fontTbl[c - ' '], G_IM_FMT_I, 16, 16, 0, G_TX_NOMIRROR | G_TX_CLAMP,
+                                   G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+            gSPTextureRectangle(gfx++, (s32)penX << 2, y << 2, ((s32)penX + size) << 2, (y + size) << 2,
+                                G_TX_RENDERTILE, 0, 0, (16 << 10) / size, (16 << 10) / size);
+        }
+        penX += Panel_GlyphAdvance(c, scale);
+    }
+    return gfx;
+}
+
+static Gfx* Panel_DrawText(Gfx* gfx, const char* str, s32 x, s32 y, f32 scale) {
+    return Panel_DrawTextN(gfx, str, 0x7FFF, x, y, scale);
+}
+
+// Word-wrapped text; returns the number of lines drawn (at most maxLines)
+static s32 Panel_DrawTextWrapped(Gfx** gfxP, const char* str, s32 x, s32 y, s32 maxW, f32 scale, s32 maxLines) {
+    s32 lines = 0;
+
+    while ((*str != '\0') && (lines < maxLines)) {
+        s32 len = 0;
+        s32 fit = 0;
+
+        // Take whole words while they fit
+        while (str[len] != '\0') {
+            s32 end = len;
+
+            while ((str[end] != ' ') && (str[end] != '\0')) {
+                end++;
+            }
+            if ((fit > 0) && (Panel_TextWidth(str, end, scale) > maxW)) {
+                break;
+            }
+            fit = end;
+            len = (str[end] == ' ') ? end + 1 : end;
+        }
+        if (fit == 0) {
+            fit = len;
+        }
+        *gfxP = Panel_DrawTextN(*gfxP, str, fit, x, y + lines * TEXT_LINE_H(scale), scale);
+        lines++;
+        str += fit;
+        while (*str == ' ') {
+            str++;
+        }
+    }
+    return lines;
+}
+
+// #endregion
 
 static Gfx* Panel_FillRect(Gfx* gfx, s32 x, s32 y, s32 w, s32 h, u8 r, u8 g, u8 b, u8 a) {
     gDPPipeSync(gfx++);
@@ -257,72 +340,6 @@ static Gfx* Panel_DrawNotebook(Gfx* gfx, s32 canvasHeight) {
     return gfx;
 }
 
-// Counters start just right of their 44-unit icons at x 404
-#define STATUS_COUNTER_X 462
-
-static Gfx* Panel_DrawStatus(Gfx* gfx) {
-    s32 i;
-    s32 x;
-    s32 y;
-
-    // Masks, laid out like the pause menu's mask page; empty slots stay as faint rings
-    for (i = 0; i < 24; i++) {
-        u8 item = gSaveContext.save.saveInfo.inventory.items[SLOT_MASK_POSTMAN + i];
-
-        x = 30 + (i % 6) * 58;
-        y = 36 + (i / 6) * 58;
-        gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, (item == ITEM_NONE) ? 35 : 110);
-        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, x, y, 52, 52);
-        if (item != ITEM_NONE) {
-            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
-            gfx = Panel_DrawTexRGBA32(gfx, gItemIcons[item], 32, 32, x + 4, y + 4, 44, 44);
-        }
-    }
-
-    // Hearts: containers, plus the pieces toward the next one
-    gfx = Panel_SetTexturedMode(gfx, 255, 70, 50, 255);
-    gfx = Panel_DrawTex8b(gfx, gHeartFullTex, G_IM_FMT_IA, 16, 16, 404, 40, 44, 44);
-    gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
-    x = STATUS_COUNTER_X + Panel_CountDigits(gSaveContext.save.saveInfo.playerData.healthCapacity / 0x10) * 16;
-    gfx = Panel_DrawCounter(gfx, gSaveContext.save.saveInfo.playerData.healthCapacity / 0x10, x, 46, 16, 32);
-    gfx = Panel_SetTexturedMode(gfx, 255, 70, 50, 255);
-    gfx = Panel_DrawTex8b(gfx, sHeartPieceTextures[GET_QUEST_HEART_PIECE_COUNT % 4], G_IM_FMT_IA, 16, 16, x + 14,
-                          46, 32, 32);
-
-    // Wallet and bank
-    gfx = Panel_SetTexturedMode(gfx, 200, 255, 100, 255);
-    gfx = Panel_DrawTex8b(gfx, gRupeeCounterIconTex, G_IM_FMT_IA, 16, 16, 404, 108, 44, 44);
-    gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
-    gfx = Panel_DrawCounter(gfx, gSaveContext.save.saveInfo.playerData.rupees,
-                            STATUS_COUNTER_X + Panel_CountDigits(gSaveContext.save.saveInfo.playerData.rupees) * 16,
-                            114, 16, 32);
-
-    gfx = Panel_SetTexturedMode(gfx, 255, 210, 80, 255);
-    gfx = Panel_DrawTex8b(gfx, gRupeeCounterIconTex, G_IM_FMT_IA, 16, 16, 404, 176, 44, 44);
-    gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
-    gfx = Panel_DrawCounter(gfx, HS_GET_BANK_RUPEES(), STATUS_COUNTER_X + Panel_CountDigits(HS_GET_BANK_RUPEES()) * 16,
-                            182, 16, 32);
-
-    // Stray fairies rescued per dungeon; a full set of 15 turns gold
-    for (i = 0; i < ARRAY_COUNT(sStrayFairyTextures); i++) {
-        s32 count = gSaveContext.save.saveInfo.inventory.strayFairies[i];
-
-        x = 46 + i * 148;
-        y = 318;
-        gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
-        gfx = Panel_DrawTexRGBA32(gfx, sStrayFairyTextures[i], 32, 24, x, y, 80, 60);
-        if (count >= 15) {
-            gfx = Panel_SetTexturedMode(gfx, 220, 150, 20, 255);
-        } else {
-            gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
-        }
-        gfx = Panel_DrawCounter(gfx, CLAMP(count, 0, 99), x + 40 + Panel_CountDigits(CLAMP(count, 0, 99)) * 8,
-                                y + 70, 16, 32);
-    }
-    return gfx;
-}
-
-// Moon countdown is right-aligned to the same 24-unit margin as the day label on the left
 // #region Touch
 
 // A drag shorter than this (canvas units) still counts as a tap
@@ -416,9 +433,9 @@ typedef struct PanelTab {
 static PanelTab sTabs[] = {
     { DUAL_SCREEN_PAGE_ITEMS, ITEM_OCARINA_OF_TIME },
     { DUAL_SCREEN_PAGE_MASKS, ITEM_MASK_DEKU },
-    { DUAL_SCREEN_PAGE_QUEST, ITEM_REMAINS_ODOLWA },
+    { DUAL_SCREEN_PAGE_QUEST, ITEM_SONG_TIME },
+    { DUAL_SCREEN_PAGE_STATUS, ITEM_REMAINS_ODOLWA },
     { DUAL_SCREEN_PAGE_NOTEBOOK, ITEM_BOMBERS_NOTEBOOK },
-    { DUAL_SCREEN_PAGE_STATUS, ITEM_WALLET_GIANT },
 };
 
 static s32 Panel_TabAvailable(s32 page) {
@@ -493,6 +510,13 @@ static Gfx* Panel_DrawTabs(Gfx* gfx, s32 canvasHeight) {
             gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
         } else {
             gfx = Panel_SetTexturedMode(gfx, 190, 180, 160, 210);
+        }
+        if (sTabs[i].iconItem == ITEM_SONG_TIME) {
+            // The song note is a small IA glyph; draw it as a brown note instead of a full-colour icon
+            gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, selected ? 255 : 170);
+            gfx = Panel_DrawTex8b(gfx, gItemIconSongNoteTex, G_IM_FMT_IA, 16, 24, x + STRIP_TAB_SIZE / 2 - 13 - grow,
+                                  tabY + STRIP_TAB_SIZE / 2 - 20 - grow, 26 + grow * 2, 39 + grow * 2);
+            continue;
         }
         gfx = Panel_DrawTexRGBA32(gfx, gItemIcons[sTabs[i].iconItem], 32, 32, x + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow,
                                   tabY + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow, STRIP_TAB_ICON + grow * 2,
@@ -926,11 +950,12 @@ static Gfx* Panel_DrawEquipPage(Gfx* gfx, PlayState* play, s32 firstSlot) {
 #define SONG_TOP 100
 #define SONG_ROW_H 62
 #define SONG_COL_W 304
-#define SONG_NOTE 35
+#define SONG_NOTE 33
 #define SONG_NOTE_ADVANCE 37
 
 typedef struct PanelSong {
     u8 song; // OCARINA_SONG_*
+    const char* name;
     u8 r;
     u8 g;
     u8 b;
@@ -938,12 +963,12 @@ typedef struct PanelSong {
 
 // Two columns: the songs of time and travel, then the songs that wake each region
 static PanelSong sPanelSongs[] = {
-    { OCARINA_SONG_TIME, 110, 70, 35 },          { OCARINA_SONG_STORMS, 110, 70, 35 },
-    { OCARINA_SONG_INVERTED_TIME, 110, 70, 35 }, { OCARINA_SONG_SONATA, 150, 255, 100 },
-    { OCARINA_SONG_DOUBLE_TIME, 110, 70, 35 },   { OCARINA_SONG_GORON_LULLABY, 255, 80, 40 },
-    { OCARINA_SONG_HEALING, 110, 70, 35 },       { OCARINA_SONG_NEW_WAVE, 100, 150, 255 },
-    { OCARINA_SONG_SOARING, 110, 70, 35 },       { OCARINA_SONG_ELEGY, 255, 160, 0 },
-    { OCARINA_SONG_EPONAS, 110, 70, 35 },        { OCARINA_SONG_OATH, 255, 100, 255 },
+    { OCARINA_SONG_TIME, "Song of Time", 110, 70, 35 },          { OCARINA_SONG_STORMS, "Song of Storms", 110, 70, 35 },
+    { OCARINA_SONG_INVERTED_TIME, "Inverted Song of Time", 110, 70, 35 }, { OCARINA_SONG_SONATA, "Sonata of Awakening", 150, 255, 100 },
+    { OCARINA_SONG_DOUBLE_TIME, "Song of Double Time", 110, 70, 35 },   { OCARINA_SONG_GORON_LULLABY, "Goron Lullaby", 255, 80, 40 },
+    { OCARINA_SONG_HEALING, "Song of Healing", 110, 70, 35 },       { OCARINA_SONG_NEW_WAVE, "New Wave Bossa Nova", 100, 150, 255 },
+    { OCARINA_SONG_SOARING, "Song of Soaring", 110, 70, 35 },       { OCARINA_SONG_ELEGY, "Elegy of Emptiness", 255, 160, 0 },
+    { OCARINA_SONG_EPONAS, "Epona's Song", 110, 70, 35 },        { OCARINA_SONG_OATH, "Oath to Order", 255, 100, 255 },
 };
 
 // Which song (if any) can be played for this row: Inverted and Double Time come with the Song of Time, and
@@ -1086,16 +1111,573 @@ static Gfx* Panel_DrawQuestPage(Gfx* gfx) {
         }
         gfx = Panel_SetSilhouetteMode(gfx, entry->r, entry->g, entry->b, (song >= 0) ? 255 : 50);
         gfx = Panel_DrawTex8b(gfx, gItemIconSongNoteTex, G_IM_FMT_IA, 16, 24, rowX + 4, rowY + 12, 26, 39);
+        // The song's name, in the notebook's ink (faint until it's learned)
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, (song >= 0) ? 255 : 90);
+        gfx = Panel_DrawText(gfx, entry->name, rowX + 38, rowY + 1, 1.0f);
         if (song < 0) {
             continue;
         }
         for (n = 0; n < gOcarinaSongButtons[song].numButtons; n++) {
             gfx = Panel_DrawSongNote(gfx, gOcarinaSongButtons[song].buttonIndex[n],
-                                     rowX + 36 + n * SONG_NOTE_ADVANCE, rowY + (SONG_ROW_H - SONG_NOTE) / 2, 255);
+                                     rowX + 36 + n * SONG_NOTE_ADVANCE, rowY + SONG_ROW_H - SONG_NOTE - 2, 255);
         }
     }
     return gfx;
 }
+
+// #endregion
+
+// #region Quest log: main quest progress, masks and collectibles, with hints behind the Lens of Truth
+
+#define CVAR_HINTS "gEnhancements.DualScreen.QuestHints"
+#define LOG_TOP 52
+#define LOG_HINT_Y 418
+#define LOG_TEXT 1.0f
+#define LOG_SMALL 0.9f
+
+typedef enum QuestLogView {
+    QUEST_LOG_MAIN,
+    QUEST_LOG_MASKS,
+    QUEST_LOG_COLLECT,
+    QUEST_LOG_VIEW_MAX
+} QuestLogView;
+
+typedef enum QuestStep {
+    STEP_OCARINA,
+    STEP_HEALING,
+    STEP_MAGIC,
+    STEP_NOTEBOOK,
+    STEP_SONATA,
+    STEP_ODOLWA,
+    STEP_GORON_MASK,
+    STEP_LULLABY,
+    STEP_GOHT,
+    STEP_ZORA_MASK,
+    STEP_BOSSA_NOVA,
+    STEP_GYORG,
+    STEP_GARO_MASK,
+    STEP_ELEGY,
+    STEP_LIGHT_ARROWS,
+    STEP_TWINMOLD,
+    STEP_OATH,
+    STEP_ALL_GIANTS
+} QuestStep;
+
+typedef struct QuestStepInfo {
+    const char* label;
+    const char* hint;
+} QuestStepInfo;
+
+static QuestStepInfo sQuestSteps[] = {
+    { "Recover the Ocarina of Time",
+      "Climb the Clock Tower when it opens at midnight on the Final Night and knock the Skull Kid's ocarina loose." },
+    { "Learn the Song of Healing",
+      "Once you have the ocarina back, return to the Mask Salesman inside the Clock Tower." },
+    { "Receive the Great Fairy's magic",
+      "Catch Clock Town's lost stray fairy (try the Laundry Pool) and bring it to the fountain in North Clock Town." },
+    { "Get the Bombers' Notebook",
+      "As Deku Link, find and catch all five Bombers kids hiding around Clock Town." },
+    { "Learn the Sonata of Awakening",
+      "Sneak through the Deku Palace gardens as Deku Link to reach the captured monkey. He teaches you the song." },
+    { "Free the first Giant (Odolwa)",
+      "Play the Sonata on the Deku platform in Woodfall to raise the temple. The Hero's Bow is inside." },
+    { "Get the Goron Mask",
+      "Follow the ghost of the Goron hero in the snowy Mountain Village and heal his soul with the Song of Healing." },
+    { "Learn the Goron Lullaby",
+      "The Goron Elder teaches the opening bars. Play them for his crying son in the Goron Shrine to learn the rest." },
+    { "Free the second Giant (Goht)",
+      "Lull the giant Goron on the path to Snowhead to sleep. The Fire Arrows are inside the temple." },
+    { "Get the Zora Mask",
+      "Push the wounded Zora floating off the Great Bay Coast to shore and play the Song of Healing." },
+    { "Learn the New Wave Bossa Nova",
+      "Return all seven Zora eggs to the Marine Research Lab's tank, then play your guitar beside it." },
+    { "Free the third Giant (Gyorg)",
+      "Play the Bossa Nova at the edge of Zora Cape to wake the turtle that carries you to the temple." },
+    { "Get the Garo's Mask",
+      "Beat the Gorman brothers in their horse race at Gorman Track. You'll need Epona." },
+    { "Learn the Elegy of Emptiness",
+      "Defeat the king of Ikana Castle. He teaches the Elegy after the battle." },
+    { "Get the Light Arrows",
+      "Climb Stone Tower using the Elegy's shells. The Light Arrows are inside its temple." },
+    { "Free the fourth Giant (Twinmold)",
+      "Shoot a Light Arrow at the red emblem at Stone Tower to flip the temple upside down." },
+    { "Learn the Oath to Order",
+      "The Giants teach it after you free the first of them." },
+    { "Free all four Giants",
+      "Clear all four temples, then play the Oath to Order atop the Clock Tower on the Final Night." },
+};
+
+typedef struct QuestRegion {
+    const char* name;
+    u8 icon;
+    u8 firstStep;
+    u8 numSteps;
+} QuestRegion;
+
+static QuestRegion sQuestRegions[] = {
+    { "Clock Town", ITEM_OCARINA_OF_TIME, STEP_OCARINA, 4 },     { "Woodfall", ITEM_REMAINS_ODOLWA, STEP_SONATA, 2 },
+    { "Snowhead", ITEM_REMAINS_GOHT, STEP_GORON_MASK, 3 },       { "Great Bay", ITEM_REMAINS_GYORG, STEP_ZORA_MASK, 3 },
+    { "Ikana", ITEM_REMAINS_TWINMOLD, STEP_GARO_MASK, 4 },       { "The Moon", ITEM_MOONS_TEAR, STEP_OATH, 2 },
+};
+
+typedef struct QuestMaskInfo {
+    const char* name;
+    const char* hint;
+} QuestMaskInfo;
+
+// In inventory order (SLOT_MASK_POSTMAN onwards)
+static QuestMaskInfo sQuestMasks[] = {
+    { "Postman's Hat", "Hand the Postman the Express Mail to Mama on the Final Day. He flees town and leaves his hat." },
+    { "All-Night Mask", "Sold at the Curiosity Shop on the Final Night, once you've saved the old lady from Sakon." },
+    { "Blast Mask", "Stop the thief Sakon from robbing the old lady in North Clock Town at midnight on the first night." },
+    { "Stone Mask", "Find the invisible soldier on the road to Ikana with the Lens of Truth and give him a red potion." },
+    { "Great Fairy's Mask", "Return all 15 stray fairies of Woodfall Temple to the Great Fairy near Woodfall." },
+    { "Deku Mask", "The Mask Salesman restores your form after you recover the ocarina." },
+    { "Keaton Mask", "Meet Kafei in the Laundry Pool's back room on Day 2. The shop owner hands you this mask." },
+    { "Bremen Mask", "Listen to the musician playing in the Laundry Pool at night." },
+    { "Bunny Hood", "Wear the Bremen Mask and march the Cucco chicks at Romani Ranch until they all grow up." },
+    { "Don Gero's Mask", "Bring a Rock Sirloin to the hungry Goron frozen near the Mountain Village." },
+    { "Mask of Scents", "After clearing Woodfall Temple, beat the Deku Butler in his race near the palace." },
+    { "Goron Mask", "Heal the ghost of the Goron hero in the Mountain Village with the Song of Healing." },
+    { "Romani's Mask", "Help Cremia get her milk delivery to town safely on the second night." },
+    { "Circus Leader's Mask", "In the Milk Bar, perform the Ballad of the Wind Fish on stage with all four forms." },
+    { "Kafei's Mask", "Talk to Madame Aroma in the Mayor's Residence about her missing son." },
+    { "Couple's Mask", "Reunite Anju and Kafei before dawn on the Final Day." },
+    { "Mask of Truth", "Lift the curse on the Swamp Spider House by collecting all 30 Gold Skulltula tokens." },
+    { "Zora Mask", "Heal the wounded Zora guitarist on the Great Bay Coast with the Song of Healing." },
+    { "Kamaro's Mask", "At night, find the ghost dancing on a rock in Termina Field and play the Song of Healing." },
+    { "Gibdo Mask", "Heal the father hiding in the music box house in Ikana Canyon with the Song of Healing." },
+    { "Garo's Mask", "Win the Gorman brothers' horse race at Gorman Track." },
+    { "Captain's Hat", "Wake the skeleton captain in the Ikana Graveyard with the Sonata and catch up with him." },
+    { "Giant's Mask", "Hidden in Stone Tower Temple." },
+    { "Fierce Deity's Mask", "Give every other mask to the children on the moon." },
+};
+
+typedef enum QuestCollect {
+    COLLECT_HEART_PIECES,
+    COLLECT_FAIRIES,
+    COLLECT_SWAMP_SKULLS,
+    COLLECT_OCEAN_SKULLS,
+    COLLECT_NOTEBOOK,
+    COLLECT_MASKS,
+    COLLECT_BANK,
+    COLLECT_MAX
+} QuestCollect;
+
+static const char* sCollectLabels[] = {
+    "Pieces of Heart", "Stray fairies", "Swamp Spider House", "Ocean Spider House", "Bombers' Notebook",
+    "Masks",           "Bank",
+};
+
+static const char* sCollectHints[] = {
+    "52 in all. They come from minigames, chests, side quests and odd corners of every region.",
+    "Each temple hides 15, and Clock Town has one more. Return them to that region's Great Fairy.",
+    "In the Southern Swamp. Clearing it lifts a family's curse and earns the Mask of Truth.",
+    "On the Great Bay Coast. Finish it on the first day for the best reward.",
+    "People you've met who can be helped. Tap the Notebook tab to see their schedules.",
+    "24 in all. The Masks view of this log lists where each one comes from.",
+    "West Clock Town's bank rewards you at 200, 1000 and 5000 Rupees. Deposits survive time travel.",
+};
+
+static s32 sQuestLogView = QUEST_LOG_MAIN;
+static s32 sQuestLogSelected[QUEST_LOG_VIEW_MAX] = { -1, -1, -1 };
+
+static s32 Panel_HintsOn(void) {
+    return CVarGetInteger(CVAR_HINTS, 0);
+}
+
+static s32 Panel_HasItem(u8 item) {
+    return INV_CONTENT(item) == item;
+}
+
+static s32 Panel_CountRemains(void) {
+    s32 i;
+    s32 count = 0;
+
+    for (i = 0; i < 4; i++) {
+        count += CHECK_QUEST_ITEM(QUEST_REMAINS_ODOLWA + i) ? 1 : 0;
+    }
+    return count;
+}
+
+static s32 Panel_QuestStepDone(s32 step) {
+    switch (step) {
+        case STEP_OCARINA:
+            return Panel_HasItem(ITEM_OCARINA_OF_TIME);
+        case STEP_HEALING:
+            return CHECK_QUEST_ITEM(QUEST_SONG_HEALING);
+        case STEP_MAGIC:
+            return gSaveContext.save.saveInfo.playerData.isMagicAcquired;
+        case STEP_NOTEBOOK:
+            return CHECK_QUEST_ITEM(QUEST_BOMBERS_NOTEBOOK);
+        case STEP_SONATA:
+            return CHECK_QUEST_ITEM(QUEST_SONG_SONATA);
+        case STEP_ODOLWA:
+            return CHECK_QUEST_ITEM(QUEST_REMAINS_ODOLWA);
+        case STEP_GORON_MASK:
+            return Panel_HasItem(ITEM_MASK_GORON);
+        case STEP_LULLABY:
+            return CHECK_QUEST_ITEM(QUEST_SONG_LULLABY);
+        case STEP_GOHT:
+            return CHECK_QUEST_ITEM(QUEST_REMAINS_GOHT);
+        case STEP_ZORA_MASK:
+            return Panel_HasItem(ITEM_MASK_ZORA);
+        case STEP_BOSSA_NOVA:
+            return CHECK_QUEST_ITEM(QUEST_SONG_BOSSA_NOVA);
+        case STEP_GYORG:
+            return CHECK_QUEST_ITEM(QUEST_REMAINS_GYORG);
+        case STEP_GARO_MASK:
+            return Panel_HasItem(ITEM_MASK_GARO);
+        case STEP_ELEGY:
+            return CHECK_QUEST_ITEM(QUEST_SONG_ELEGY);
+        case STEP_LIGHT_ARROWS:
+            return Panel_HasItem(ITEM_ARROW_LIGHT);
+        case STEP_TWINMOLD:
+            return CHECK_QUEST_ITEM(QUEST_REMAINS_TWINMOLD);
+        case STEP_OATH:
+            return CHECK_QUEST_ITEM(QUEST_SONG_OATH);
+        case STEP_ALL_GIANTS:
+            return Panel_CountRemains() == 4;
+        default:
+            return false;
+    }
+}
+
+// First unfinished step of a region, or -1 when it's complete
+static s32 Panel_RegionNextStep(QuestRegion* region) {
+    s32 i;
+
+    for (i = 0; i < region->numSteps; i++) {
+        if (!Panel_QuestStepDone(region->firstStep + i)) {
+            return region->firstStep + i;
+        }
+    }
+    return -1;
+}
+
+static s32 Panel_MaskOwned(s32 i) {
+    return gSaveContext.save.saveInfo.inventory.items[SLOT_MASK_POSTMAN + i] != ITEM_NONE;
+}
+
+static void Panel_CollectCount(s32 line, s32* have, s32* total) {
+    s32 i;
+
+    *have = 0;
+    switch (line) {
+        case COLLECT_HEART_PIECES:
+            // Each boss leaves a Heart Container; every other heart beyond the starting three came from pieces
+            *have = CLAMP_MIN((gSaveContext.save.saveInfo.playerData.healthCapacity / 0x10) - 3 - Panel_CountRemains(),
+                              0) * 4 +
+                    GET_QUEST_HEART_PIECE_COUNT % 4;
+            *total = 52;
+            break;
+        case COLLECT_FAIRIES:
+            for (i = 0; i < 4; i++) {
+                *have += CLAMP_MAX(gSaveContext.save.saveInfo.inventory.strayFairies[i], 15);
+            }
+            *have += gSaveContext.save.saveInfo.playerData.isMagicAcquired ? 1 : 0;
+            *total = 61;
+            break;
+        case COLLECT_SWAMP_SKULLS:
+            *have = Inventory_GetSkullTokenCount(SCENE_KINSTA1);
+            *total = 30;
+            break;
+        case COLLECT_OCEAN_SKULLS:
+            *have = Inventory_GetSkullTokenCount(SCENE_KINDAN2);
+            *total = 30;
+            break;
+        case COLLECT_NOTEBOOK:
+            for (i = 0; i < BOMBERS_NOTEBOOK_PERSON_MAX; i++) {
+                *have += CHECK_WEEKEVENTREG(gBombersNotebookWeekEventFlags[i]) ? 1 : 0;
+            }
+            *total = BOMBERS_NOTEBOOK_PERSON_MAX;
+            break;
+        case COLLECT_MASKS:
+            for (i = 0; i < 24; i++) {
+                *have += Panel_MaskOwned(i);
+            }
+            *total = 24;
+            break;
+        default:
+            *have = HS_GET_BANK_RUPEES();
+            *total = 5000;
+            break;
+    }
+}
+
+static char* Panel_FormatNumber(char* out, s32 value) {
+    char digits[12];
+    s32 n = 0;
+
+    if (value < 0) {
+        value = 0;
+    }
+    do {
+        digits[n++] = '0' + (value % 10);
+        value /= 10;
+    } while (value != 0);
+    while (n > 0) {
+        *out++ = digits[--n];
+    }
+    *out = '\0';
+    return out;
+}
+
+// "have / total"
+static void Panel_FormatFraction(char* out, s32 have, s32 total) {
+    out = Panel_FormatNumber(out, have);
+    *out++ = ' ';
+    *out++ = '/';
+    *out++ = ' ';
+    Panel_FormatNumber(out, total);
+}
+
+// #region Layout
+
+#define LOG_HEADER_W 128
+#define LOG_LENS_X 580
+#define LOG_ROW_H 60
+#define LOG_MASK_SLOT 56
+#define LOG_COLLECT_ROW_H 52
+
+static void Panel_UpdateQuestLog(PlayState* play) {
+    s32 i;
+
+    for (i = 0; i < QUEST_LOG_VIEW_MAX; i++) {
+        if (Panel_Tapped(16 + i * (LOG_HEADER_W + 8), 6, LOG_HEADER_W, 38) && (sQuestLogView != i)) {
+            sQuestLogView = i;
+            Audio_PlaySfx(NA_SE_SY_CURSOR);
+            return;
+        }
+    }
+    if (Panel_Tapped(LOG_LENS_X - 6, 0, 56, 50)) {
+        CVarSetInteger(CVAR_HINTS, !Panel_HintsOn());
+        Audio_PlaySfx(Panel_HintsOn() ? NA_SE_SY_GLASSMODE_ON : NA_SE_SY_GLASSMODE_OFF);
+        return;
+    }
+
+    if (sQuestLogView == QUEST_LOG_MAIN) {
+        for (i = 0; i < ARRAY_COUNT(sQuestRegions); i++) {
+            if (Panel_Tapped(0, LOG_TOP + i * LOG_ROW_H, DUAL_SCREEN_CANVAS_WIDTH, LOG_ROW_H)) {
+                sQuestLogSelected[QUEST_LOG_MAIN] = i;
+                Audio_PlaySfx(NA_SE_SY_CURSOR);
+            }
+        }
+    } else if (sQuestLogView == QUEST_LOG_MASKS) {
+        for (i = 0; i < 24; i++) {
+            if (Panel_Tapped(16 + (i % 6) * LOG_MASK_SLOT, LOG_TOP + (i / 6) * LOG_MASK_SLOT, LOG_MASK_SLOT,
+                             LOG_MASK_SLOT)) {
+                sQuestLogSelected[QUEST_LOG_MASKS] = i;
+                Audio_PlaySfx(NA_SE_SY_CURSOR);
+            }
+        }
+    } else {
+        for (i = 0; i < COLLECT_MAX; i++) {
+            if (Panel_Tapped(0, LOG_TOP + i * LOG_COLLECT_ROW_H, DUAL_SCREEN_CANVAS_WIDTH, LOG_COLLECT_ROW_H)) {
+                sQuestLogSelected[QUEST_LOG_COLLECT] = i;
+                Audio_PlaySfx(NA_SE_SY_CURSOR);
+            }
+        }
+    }
+}
+
+static Gfx* Panel_DrawLogHeader(Gfx* gfx) {
+    static const char* sViewNames[] = { "Main Quest", "Masks", "Collection" };
+    s32 i;
+
+    for (i = 0; i < QUEST_LOG_VIEW_MAX; i++) {
+        s32 x = 16 + i * (LOG_HEADER_W + 8);
+        s32 selected = (sQuestLogView == i);
+
+        gfx = Panel_FillRect(gfx, x, 8, LOG_HEADER_W, 34, 120, 80, 30, selected ? 150 : 45);
+        gfx = Panel_SetSilhouetteMode(gfx, selected ? 255 : 70, selected ? 245 : 40, selected ? 210 : 15, 255);
+        gfx = Panel_DrawText(gfx, sViewNames[i], x + (LOG_HEADER_W - Panel_TextWidth(sViewNames[i], 64, LOG_TEXT)) / 2,
+                             16, LOG_TEXT);
+    }
+
+    // The Lens of Truth reveals hints
+    if (Panel_HintsOn()) {
+        gfx = Panel_SetTexturedMode(gfx, 255, 200, 60, 230);
+        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, LOG_LENS_X - 4, 0, 52, 52);
+        gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+    } else {
+        gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, 50);
+        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, LOG_LENS_X - 4, 0, 52, 52);
+        gfx = Panel_SetTexturedMode(gfx, 190, 180, 160, 210);
+    }
+    return Panel_DrawItemIcon(gfx, ITEM_LENS_OF_TRUTH, LOG_LENS_X + 22, 26, 42);
+}
+
+// The box along the bottom: the selected entry's hint while the Lens is on
+static Gfx* Panel_DrawLogHint(Gfx* gfx, const char* hint) {
+    gfx = Panel_FillRect(gfx, 12, LOG_HINT_Y, DUAL_SCREEN_CANVAS_WIDTH - 24, 58, 0, 0, 0, 150);
+    gfx = Panel_SetSilhouetteMode(gfx, 255, 255, 255, 255);
+    if (!Panel_HintsOn()) {
+        Panel_DrawTextWrapped(&gfx, "Tap the Lens of Truth to reveal hints.", 24, LOG_HINT_Y + 18,
+                              DUAL_SCREEN_CANVAS_WIDTH - 48, LOG_SMALL, 1);
+    } else if (hint == NULL) {
+        Panel_DrawTextWrapped(&gfx, "Tap an entry to see its hint.", 24, LOG_HINT_Y + 18, DUAL_SCREEN_CANVAS_WIDTH - 48,
+                              LOG_SMALL, 1);
+    } else {
+        Panel_DrawTextWrapped(&gfx, hint, 24, LOG_HINT_Y + 6, DUAL_SCREEN_CANVAS_WIDTH - 48, LOG_SMALL, 2);
+    }
+    return gfx;
+}
+
+static Gfx* Panel_DrawLogMain(Gfx* gfx) {
+    s32 i;
+    s32 k;
+    const char* hint = NULL;
+
+    for (i = 0; i < ARRAY_COUNT(sQuestRegions); i++) {
+        QuestRegion* region = &sQuestRegions[i];
+        s32 y = LOG_TOP + i * LOG_ROW_H;
+        s32 next = Panel_RegionNextStep(region);
+
+        if (sQuestLogSelected[QUEST_LOG_MAIN] == i) {
+            gfx = Panel_FillRect(gfx, 8, y + 2, DUAL_SCREEN_CANVAS_WIDTH - 16, LOG_ROW_H - 4, 255, 200, 60, 70);
+            hint = (next >= 0) ? sQuestSteps[next].hint : "Done. Every step here is complete.";
+        }
+        gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, (next < 0) ? 255 : 200);
+        gfx = Panel_DrawItemIcon(gfx, region->icon, 40, y + LOG_ROW_H / 2, 46);
+
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+        gfx = Panel_DrawText(gfx, region->name, 72, y + 6, LOG_TEXT);
+
+        // One dot per step, filled gold when done
+        for (k = 0; k < region->numSteps; k++) {
+            s32 done = Panel_QuestStepDone(region->firstStep + k);
+
+            gfx = Panel_SetTexturedMode(gfx, done ? 255 : 90, done ? 190 : 60, done ? 40 : 30, done ? 255 : 70);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, 230 + k * 24, y + 8, 18, 18);
+        }
+
+        if (next < 0) {
+            gfx = Panel_SetSilhouetteMode(gfx, 170, 120, 20, 255);
+            gfx = Panel_DrawText(gfx, "Complete", 72, y + 30, LOG_SMALL);
+        } else {
+            gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
+            gfx = Panel_DrawText(gfx, sQuestSteps[next].label, 72, y + 30, LOG_SMALL);
+        }
+    }
+    return Panel_DrawLogHint(gfx, hint);
+}
+
+static Gfx* Panel_DrawLogMasks(Gfx* gfx) {
+    s32 i;
+    s32 selected = sQuestLogSelected[QUEST_LOG_MASKS];
+
+    for (i = 0; i < 24; i++) {
+        s32 x = 16 + (i % 6) * LOG_MASK_SLOT;
+        s32 y = LOG_TOP + (i / 6) * LOG_MASK_SLOT;
+        s32 owned = Panel_MaskOwned(i);
+
+        if (i == selected) {
+            gfx = Panel_SetTexturedMode(gfx, 255, 200, 60, 230);
+        } else {
+            gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, owned ? 70 : 35);
+        }
+        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, x + 2, y + 2, LOG_MASK_SLOT - 4,
+                              LOG_MASK_SLOT - 4);
+        // Missing masks show as dark outlines
+        if (owned) {
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+        } else {
+            gfx = Panel_SetSilhouetteMode(gfx, 60, 40, 20, 110);
+        }
+        gfx = Panel_DrawItemIcon(gfx, ITEM_MASK_POSTMAN + i, x + LOG_MASK_SLOT / 2, y + LOG_MASK_SLOT / 2, 48);
+    }
+
+    // Name and status of the picked mask beside the grid
+    if (selected >= 0) {
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+        Panel_DrawTextWrapped(&gfx, sQuestMasks[selected].name, 368, LOG_TOP + 10, 256, 1.1f, 2);
+        gfx = Panel_SetSilhouetteMode(gfx, Panel_MaskOwned(selected) ? 170 : 110, Panel_MaskOwned(selected) ? 120 : 70,
+                                      Panel_MaskOwned(selected) ? 20 : 35, 255);
+        gfx = Panel_DrawText(gfx, Panel_MaskOwned(selected) ? "Found" : "Not found yet", 368, LOG_TOP + 70, LOG_TEXT);
+    } else {
+        gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
+        Panel_DrawTextWrapped(&gfx, "Tap a mask to see what it is and where to find it.", 368, LOG_TOP + 10, 256,
+                              LOG_SMALL, 4);
+    }
+    {
+        char count[16];
+        s32 have;
+        s32 total;
+
+        Panel_CollectCount(COLLECT_MASKS, &have, &total);
+        Panel_FormatFraction(count, have, total);
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+        gfx = Panel_DrawText(gfx, count, 368, LOG_TOP + 4 * LOG_MASK_SLOT - 22, 1.2f);
+    }
+    return Panel_DrawLogHint(gfx, (selected >= 0) ? sQuestMasks[selected].hint : NULL);
+}
+
+static Gfx* Panel_DrawCollectIcon(Gfx* gfx, s32 line, s32 cx, s32 cy) {
+    switch (line) {
+        case COLLECT_HEART_PIECES:
+            gfx = Panel_SetTexturedMode(gfx, 255, 70, 50, 255);
+            return Panel_DrawTex8b(gfx, gHeartFullTex, G_IM_FMT_IA, 16, 16, cx - 18, cy - 18, 36, 36);
+        case COLLECT_FAIRIES:
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+            return Panel_DrawTexRGBA32(gfx, sStrayFairyTextures[0], 32, 24, cx - 24, cy - 18, 48, 36);
+        case COLLECT_SWAMP_SKULLS:
+        case COLLECT_OCEAN_SKULLS:
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+            return Panel_DrawItemIcon(gfx, ITEM_SKULL_TOKEN, cx, cy, 40);
+        case COLLECT_NOTEBOOK:
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+            return Panel_DrawItemIcon(gfx, ITEM_BOMBERS_NOTEBOOK, cx, cy, 40);
+        case COLLECT_MASKS:
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+            return Panel_DrawItemIcon(gfx, ITEM_MASK_KEATON, cx, cy, 40);
+        default:
+            gfx = Panel_SetTexturedMode(gfx, 255, 210, 80, 255);
+            return Panel_DrawTex8b(gfx, gRupeeCounterIconTex, G_IM_FMT_IA, 16, 16, cx - 18, cy - 18, 36, 36);
+    }
+}
+
+static Gfx* Panel_DrawLogCollect(Gfx* gfx) {
+    s32 i;
+    s32 selected = sQuestLogSelected[QUEST_LOG_COLLECT];
+
+    for (i = 0; i < COLLECT_MAX; i++) {
+        s32 y = LOG_TOP + i * LOG_COLLECT_ROW_H;
+        char count[24];
+        s32 have;
+        s32 total;
+
+        if (i == selected) {
+            gfx = Panel_FillRect(gfx, 8, y + 2, DUAL_SCREEN_CANVAS_WIDTH - 16, LOG_COLLECT_ROW_H - 4, 255, 200, 60, 70);
+        }
+        gfx = Panel_DrawCollectIcon(gfx, i, 40, y + LOG_COLLECT_ROW_H / 2);
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+        gfx = Panel_DrawText(gfx, sCollectLabels[i], 72, y + 16, LOG_TEXT);
+
+        Panel_CollectCount(i, &have, &total);
+        Panel_FormatFraction(count, have, total);
+        // Finished lines turn gold
+        if (have >= total) {
+            gfx = Panel_SetSilhouetteMode(gfx, 190, 130, 20, 255);
+        }
+        gfx = Panel_DrawText(gfx, count, DUAL_SCREEN_CANVAS_WIDTH - 24 - Panel_TextWidth(count, 24, LOG_TEXT), y + 16,
+                             LOG_TEXT);
+    }
+    return Panel_DrawLogHint(gfx, (selected >= 0) ? sCollectHints[selected] : NULL);
+}
+
+static Gfx* Panel_DrawQuestLog(Gfx* gfx) {
+    gfx = Panel_DrawLogHeader(gfx);
+    if (sQuestLogView == QUEST_LOG_MAIN) {
+        return Panel_DrawLogMain(gfx);
+    }
+    if (sQuestLogView == QUEST_LOG_MASKS) {
+        return Panel_DrawLogMasks(gfx);
+    }
+    return Panel_DrawLogCollect(gfx);
+}
+
+// #endregion
 
 // #endregion
 
@@ -1114,6 +1696,9 @@ void DualScreen_Update(PlayState* play) {
     } else if (sPage == DUAL_SCREEN_PAGE_QUEST) {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
         Panel_UpdateQuestPage(play);
+    } else if (sPage == DUAL_SCREEN_PAGE_STATUS) {
+        sSelectedSlot = sDragSlot = sUseTarget = -1;
+        Panel_UpdateQuestLog(play);
     } else {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
     }
@@ -1139,6 +1724,17 @@ static Gfx* Panel_Begin(Gfx** start, s32 frameBufferId, s32 canvasHeight) {
     return Panel_DrawBackground(gfx, canvasHeight);
 }
 
+// This frame's panel display list, until its first replay has drawn it
+static Gfx* sPendingPanelDL = NULL;
+
+void DualScreen_SkipPanelReplays(void) {
+    if (sPendingPanelDL != NULL) {
+        // Interpolation replays the frame's display list several times; the panels only need drawing once
+        gSPEndDisplayList(sPendingPanelDL);
+        sPendingPanelDL = NULL;
+    }
+}
+
 static void Panel_End(Gfx* start, Gfx* gfx, GraphicsContext* gfxCtx) {
     gDPPipeSync(gfx++);
     gsSPResetFB(gfx++);
@@ -1149,6 +1745,7 @@ static void Panel_End(Gfx* start, Gfx* gfx, GraphicsContext* gfxCtx) {
         abort();
     }
 
+    sPendingPanelDL = start;
     OPEN_DISPS(gfxCtx);
     gSPDisplayList(OVERLAY_DISP++, start);
     // Restore the main screen's scissor for whatever is drawn after us
@@ -1180,7 +1777,7 @@ void DualScreen_Draw(PlayState* play) {
     } else if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {
         gfx = Panel_DrawNotebook(gfx, canvasHeight);
     } else {
-        gfx = Panel_DrawStatus(gfx);
+        gfx = Panel_DrawQuestLog(gfx);
     }
     gfx = Panel_DrawStrip(gfx, canvasHeight);
     Panel_End(start, gfx, play->state.gfxCtx);

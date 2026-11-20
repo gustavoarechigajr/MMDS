@@ -1237,9 +1237,12 @@ void RunCommands(Gfx* Commands, int time, int step, int denom, int count) {
         intp->mInterpolationT = (float)time / denom;
         wnd->DrawAndRunGraphicsCommands(Commands, mtx_replacements);
         intp->mInterpolationIndex++;
+        if (i == 0) {
+            // The second-screen panels don't move between interpolated frames: draw them once, show them now
+            DualScreen_SkipPanelReplays();
+            DualScreen_PresentFrame();
+        }
     }
-    // Copy this frame's second-screen panels to the secondary display, if there is one
-    DualScreen_PresentFrame();
     ImGui::PopStyleColor();
 }
 

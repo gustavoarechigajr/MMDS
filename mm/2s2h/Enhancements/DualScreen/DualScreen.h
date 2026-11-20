@@ -42,6 +42,8 @@ uint8_t DualScreen_PollTouch(DualScreenTouchEvent* event);
 // Plays an ocarina song: for the next few frames C-Left counts as the ocarina, and the staff that opens
 // plays this song back on its own (the same path as 2S2H's Song Items). The caller presses C-Left.
 void DualScreen_RequestSong(uint8_t song);
+// Called after the first interpolated replay of a frame: the panels are already drawn, so later replays skip them
+void DualScreen_SkipPanelReplays(void);
 // Copies the panel framebuffer onto the secondary display; called after the frame is rendered
 void DualScreen_PresentFrame(void);
 
