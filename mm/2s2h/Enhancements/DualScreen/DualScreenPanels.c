@@ -763,9 +763,9 @@ static Gfx* Panel_DrawAmmo(Gfx* gfx, s32 slot, s32 rightX, s32 y) {
     ammo = gSaveContext.save.saveInfo.inventory.ammo[slot];
     // A soft shadow, then the count in the pause menu's white
     gfx = Panel_SetTexturedMode(gfx, 0, 0, 0, 150);
-    gfx = Panel_DrawCounter(gfx, ammo, rightX + 1, y + 1, 10, 20);
+    gfx = Panel_DrawCounter(gfx, ammo, rightX + 2, y + 2, 13, 26);
     gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
-    return Panel_DrawCounter(gfx, ammo, rightX, y, 10, 20);
+    return Panel_DrawCounter(gfx, ammo, rightX, y, 13, 26);
 }
 
 static Gfx* Panel_DrawItemIcon(Gfx* gfx, u8 item, s32 cx, s32 cy, s32 size) {
@@ -802,7 +802,12 @@ static Gfx* Panel_DrawEquipTargets(Gfx* gfx) {
             highlight = 2;
         }
 
-        gfx = Panel_SetTexturedMode(gfx, 255, 240, 0, (highlight == 2) ? 255 : (highlight ? 200 : 140));
+        // C buttons in the HUD's yellow; D-pad slots in a neutral grey
+        if (t->target < EQUIP_TARGET_D_RIGHT) {
+            gfx = Panel_SetTexturedMode(gfx, 255, 240, 0, (highlight == 2) ? 255 : (highlight ? 200 : 140));
+        } else {
+            gfx = Panel_SetTexturedMode(gfx, 200, 200, 190, (highlight == 2) ? 255 : (highlight ? 200 : 130));
+        }
         gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, t->x - t->size / 2 - highlight * 2,
                               t->y - t->size / 2 - highlight * 2, t->size + highlight * 4, t->size + highlight * 4);
         if (item < ITEM_FD) {
@@ -844,6 +849,11 @@ static Gfx* Panel_DrawEquipPage(Gfx* gfx, PlayState* play, s32 firstSlot) {
         if (!shown || ((slot == sDragSlot) && sTouch.moved)) {
             continue;
         }
+        // Equipped items sit in the pause menu's frame, drawn behind the icon
+        if (Panel_SlotEquipped(slot)) {
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+            gfx = Panel_DrawTex8b(gfx, gEquippedItemOutlineTex, G_IM_FMT_IA, 32, 32, cx - 31, cy - 31, 62, 62);
+        }
         // Items this form can't use are greyed out, as in the pause menu
         if (Panel_SlotEquippable(slot)) {
             gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
@@ -851,11 +861,7 @@ static Gfx* Panel_DrawEquipPage(Gfx* gfx, PlayState* play, s32 firstSlot) {
             gfx = Panel_SetTexturedMode(gfx, 120, 120, 120, 170);
         }
         gfx = Panel_DrawItemIcon(gfx, item, cx, cy, GRID_ICON);
-        if (Panel_SlotEquipped(slot)) {
-            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
-            gfx = Panel_DrawTex8b(gfx, gEquippedItemOutlineTex, G_IM_FMT_IA, 32, 32, cx - 30, cy - 30, 60, 60);
-        }
-        gfx = Panel_DrawAmmo(gfx, slot, cx + 26, cy + 8);
+        gfx = Panel_DrawAmmo(gfx, slot, cx + 28, cy + 6);
     }
 
     gfx = Panel_DrawEquipTargets(gfx);
