@@ -1112,6 +1112,8 @@ void Play_UpdateMain(PlayState* this) {
 }
 
 void Play_Update(PlayState* this) {
+    DualScreen_Update(this);
+
     if (!sBombersNotebookOpen) {
         if (this->pauseCtx.bombersNotebookOpen) {
             sBombersNotebookOpen = true;

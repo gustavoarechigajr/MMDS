@@ -17,24 +17,36 @@ typedef enum DualScreenPage {
     DUAL_SCREEN_PAGE_MAX
 } DualScreenPage;
 
-typedef enum DualScreenSwipe {
-    DUAL_SCREEN_SWIPE_NONE,
-    DUAL_SCREEN_SWIPE_UP,
-    DUAL_SCREEN_SWIPE_DOWN
-} DualScreenSwipe;
+typedef enum DualScreenTouchType {
+    DUAL_SCREEN_TOUCH_DOWN,
+    DUAL_SCREEN_TOUCH_MOVE,
+    DUAL_SCREEN_TOUCH_UP
+} DualScreenTouchType;
+
+// One touch event, in canvas units
+typedef struct DualScreenTouchEvent {
+    int32_t type;
+    float x;
+    float y;
+} DualScreenTouchEvent;
 
 // True while a secondary display surface exists and the feature is enabled
 uint8_t DualScreen_IsActive(void);
 int32_t DualScreen_GetFrameBufferId(void);
 int32_t DualScreen_GetCanvasHeight(void);
-// Touch gestures collected since the last call; called once per game frame
-void DualScreen_ConsumeInput(uint8_t* tapped, int32_t* swipe);
+// Pops the oldest queued touch event; returns 0 when the queue is empty
+uint8_t DualScreen_PollTouch(DualScreenTouchEvent* event);
 // Copies the panel framebuffer onto the secondary display; called after the frame is rendered
 void DualScreen_PresentFrame(void);
 
 struct PlayState;
-// Draws the current page into the panel framebuffer (DualScreenPanels.c)
+struct GraphicsContext;
+// Handles touch input; runs in Play_Update so actions can safely change game state (DualScreenPanels.c)
+void DualScreen_Update(struct PlayState* play);
+// Draws the current page into the panel framebuffer
 void DualScreen_Draw(struct PlayState* play);
+// Draws the title page while no gameplay is running (title screen, file select); called every frame
+void DualScreen_DrawIdle(struct GraphicsContext* gfxCtx);
 
 #ifdef __cplusplus
 }

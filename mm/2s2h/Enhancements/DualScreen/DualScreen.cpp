@@ -14,6 +14,7 @@
 #include <libultraship/bridge/consolevariablebridge.h>
 
 #include <atomic>
+#include <deque>
 #include <cmath>
 #include <mutex>
 
@@ -21,8 +22,10 @@
 
 namespace {
 
-std::atomic<uint8_t> sPendingTap{ 0 };
-std::atomic<int32_t> sPendingSwipe{ DUAL_SCREEN_SWIPE_NONE };
+// Touch events from the UI thread, drained by the game thread each update
+std::mutex sTouchMutex;
+std::deque<DualScreenTouchEvent> sTouchQueue;
+constexpr size_t kTouchQueueMax = 64;
 std::atomic<int32_t> sSurfaceWidth{ 1240 };
 std::atomic<int32_t> sSurfaceHeight{ 1080 };
 
@@ -62,9 +65,28 @@ extern "C" int32_t DualScreen_GetFrameBufferId(void) {
     return sFrameBufferId;
 }
 
-extern "C" void DualScreen_ConsumeInput(uint8_t* tapped, int32_t* swipe) {
-    *tapped = sPendingTap.exchange(0);
-    *swipe = sPendingSwipe.exchange(DUAL_SCREEN_SWIPE_NONE);
+extern "C" uint8_t DualScreen_PollTouch(DualScreenTouchEvent* event) {
+    std::lock_guard<std::mutex> lock(sTouchMutex);
+    if (sTouchQueue.empty()) {
+        return 0;
+    }
+    *event = sTouchQueue.front();
+    sTouchQueue.pop_front();
+    return 1;
+}
+
+static void PushTouch(int32_t type, float x, float y) {
+    std::lock_guard<std::mutex> lock(sTouchMutex);
+    if (type == DUAL_SCREEN_TOUCH_MOVE && !sTouchQueue.empty() && sTouchQueue.back().type == DUAL_SCREEN_TOUCH_MOVE) {
+        // Only the latest position of a drag matters
+        sTouchQueue.back().x = x;
+        sTouchQueue.back().y = y;
+        return;
+    }
+    if (sTouchQueue.size() >= kTouchQueueMax) {
+        sTouchQueue.pop_front();
+    }
+    sTouchQueue.push_back({ type, x, y });
 }
 
 #if defined(__ANDROID__)
@@ -243,15 +265,9 @@ extern "C" void DualScreen_PresentFrame(void) {
         if (!CreateSurfaceLocked(window)) {
             DS_LOG("create surface failed: egl 0x%x", eglGetError());
             ANativeWindow_release(window);
-        } else {
-            DS_LOG("surface created");
         }
     }
     if (sPresent.surface == EGL_NO_SURFACE || sFrameBufferId == -1 || CVarGetInteger(CVAR_DUAL_SCREEN, 1) == 0) {
-        static int sSkipCount = 0;
-        if (sSkipCount++ % 600 == 0) {
-            DS_LOG("skip: surface=%d fb=%d", sPresent.surface != EGL_NO_SURFACE, sFrameBufferId);
-        }
         return;
     }
 
@@ -301,11 +317,6 @@ extern "C" void DualScreen_PresentFrame(void) {
     glDisableVertexAttribArray(1);
 
     eglSwapBuffers(sPresent.display, sPresent.surface);
-    static int sLogCount = 0;
-    if (sLogCount++ % 600 == 0) {
-        DS_LOG("present fb=%d tex=%u %dx%d gl=0x%x egl=0x%x", sFrameBufferId, texture, width, height, glGetError(),
-               eglGetError());
-    }
     eglMakeCurrent(prevDisplay, prevDraw, prevRead, prevContext);
 }
 
@@ -339,24 +350,20 @@ extern "C" JNIEXPORT void JNICALL Java_com_twoshipfork_mm_MainActivity_nativeDua
                                                                                              jclass clazz,
                                                                                              jint action, jfloat x,
                                                                                              jfloat y) {
-    // Gesture recognition: a short movement is a tap, a mostly vertical one is a swipe
-    static float sDownX = 0.0f;
-    static float sDownY = 0.0f;
-    constexpr jint kActionDown = 0;
-    constexpr jint kActionUp = 1;
-    constexpr float kSwipeThreshold = 0.06f;
-
-    if (action == kActionDown) {
-        sDownX = x;
-        sDownY = y;
-    } else if (action == kActionUp) {
-        float dx = x - sDownX;
-        float dy = y - sDownY;
-        if (fabsf(dy) >= kSwipeThreshold && fabsf(dy) > fabsf(dx)) {
-            sPendingSwipe = (dy < 0.0f) ? DUAL_SCREEN_SWIPE_UP : DUAL_SCREEN_SWIPE_DOWN;
-        } else if (fabsf(dx) < kSwipeThreshold && fabsf(dy) < kSwipeThreshold) {
-            sPendingTap = 1;
-        }
+    // MotionEvent actions: DOWN 0, UP 1, MOVE 2, CANCEL 3
+    float canvasX = x * DUAL_SCREEN_CANVAS_WIDTH;
+    float canvasY = y * DualScreen_GetCanvasHeight();
+    switch (action) {
+        case 0:
+            PushTouch(DUAL_SCREEN_TOUCH_DOWN, canvasX, canvasY);
+            break;
+        case 2:
+            PushTouch(DUAL_SCREEN_TOUCH_MOVE, canvasX, canvasY);
+            break;
+        case 1:
+        case 3:
+            PushTouch(DUAL_SCREEN_TOUCH_UP, canvasX, canvasY);
+            break;
     }
 }
 

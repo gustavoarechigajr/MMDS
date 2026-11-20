@@ -9,6 +9,7 @@
 #include "interface/parameter_static/parameter_static.h"
 #include "interface/week_static/week_static.h"
 #include "archives/icon_item_static/icon_item_static_yar.h"
+#include "objects/object_mag/object_mag.h"
 #include "BenPort.h"
 #include "2s2h/BenGui/HudEditor.h"
 #include "DualScreen.h"
@@ -153,7 +154,8 @@ static Gfx* Panel_DrawNotebookTime(Gfx* gfx, s32 hours, s32 minutes, s32 x, s32 
 
         // Glyphs are centred in their cells, so centre each cell on its advance
         gfx = Panel_DrawTex4b(gfx, sNotebookDigitTextures[glyphs[i]], G_IM_FMT_I, 16, 17,
-                              x + (advance - digitW) / 2, y, digitW, digitH);
+                              x + (advance - digitW) / 2 + ((glyphs[i] == 10) ? digitW / 10 : 0), y, digitW,
+                              digitH);
         x += advance;
     }
     return gfx;
@@ -164,9 +166,9 @@ static Gfx* Panel_DrawNotebookTime(Gfx* gfx, s32 hours, s32 minutes, s32 x, s32 
 static void Panel_UpdateNotebookScroll(s32 swipe) {
     BombersNotebook* nb = &sPanelNotebook;
 
-    if (swipe == DUAL_SCREEN_SWIPE_UP) {
+    if (swipe > 0) {
         sNotebookTargetPage = CLAMP_MAX(sNotebookTargetPage + 4, NOTEBOOK_MAX_PAGE);
-    } else if (swipe == DUAL_SCREEN_SWIPE_DOWN) {
+    } else if (swipe < 0) {
         sNotebookTargetPage = CLAMP_MIN(sNotebookTargetPage - 4, 0);
     }
 
@@ -301,19 +303,185 @@ static Gfx* Panel_DrawStatus(Gfx* gfx) {
 }
 
 // Moon countdown is right-aligned to the same 24-unit margin as the day label on the left
-#define TIME_BAR_DIGIT_W 22
-#define TIME_BAR_DIGIT_H 30
-#define TIME_BAR_TIME_W (4 * (TIME_BAR_DIGIT_W * 5 / 8) + TIME_BAR_DIGIT_W / 2)
-#define TIME_BAR_MOON_X (DUAL_SCREEN_CANVAS_WIDTH - 24 - TIME_BAR_TIME_W - 40)
-#define TIME_BAR_SEGMENTS_X 200
-#define TIME_BAR_SEGMENT_W ((TIME_BAR_MOON_X - 24 - TIME_BAR_SEGMENTS_X - 2 * 6) / 3)
+// #region Touch
 
-static Gfx* Panel_DrawTimeBar(Gfx* gfx, s32 canvasHeight) {
+// A drag shorter than this (canvas units) still counts as a tap
+#define TOUCH_SLOP 14
+#define SWIPE_MIN 40
+
+typedef struct PanelTouch {
+    s32 down;
+    s32 moved;    // left the slop radius since going down
+    s32 released; // went up this update
+    f32 x;
+    f32 y;
+    f32 startX;
+    f32 startY;
+} PanelTouch;
+
+static PanelTouch sTouch;
+
+static void Panel_PollTouch(void) {
+    DualScreenTouchEvent event;
+
+    sTouch.released = false;
+    while (DualScreen_PollTouch(&event)) {
+        if (event.type == DUAL_SCREEN_TOUCH_DOWN) {
+            sTouch.down = true;
+            sTouch.moved = false;
+            sTouch.startX = event.x;
+            sTouch.startY = event.y;
+        } else if (!sTouch.down) {
+            continue;
+        }
+        sTouch.x = event.x;
+        sTouch.y = event.y;
+        if ((ABS_ALT((s32)(sTouch.x - sTouch.startX)) > TOUCH_SLOP) ||
+            (ABS_ALT((s32)(sTouch.y - sTouch.startY)) > TOUCH_SLOP)) {
+            sTouch.moved = true;
+        }
+        if (event.type == DUAL_SCREEN_TOUCH_UP) {
+            sTouch.down = false;
+            sTouch.released = true;
+            // Release the rest next update, so a quick tap is seen as a tap and not lost
+            break;
+        }
+    }
+}
+
+static s32 Panel_InRect(f32 x, f32 y, s32 rx, s32 ry, s32 rw, s32 rh) {
+    return (x >= rx) && (x < rx + rw) && (y >= ry) && (y < ry + rh);
+}
+
+// Released this update without moving, inside the rect (judged where the finger went down)
+static s32 Panel_Tapped(s32 rx, s32 ry, s32 rw, s32 rh) {
+    return sTouch.released && !sTouch.moved && Panel_InRect(sTouch.startX, sTouch.startY, rx, ry, rw, rh);
+}
+
+// Held down without moving, inside the rect: used to show press feedback
+static s32 Panel_Pressing(s32 rx, s32 ry, s32 rw, s32 rh) {
+    return sTouch.down && !sTouch.moved && Panel_InRect(sTouch.startX, sTouch.startY, rx, ry, rw, rh);
+}
+
+// Vertical swipe this update: +1 for a swipe up (move down the list), -1 for a swipe down
+static s32 Panel_VerticalSwipe(void) {
+    f32 dx = sTouch.x - sTouch.startX;
+    f32 dy = sTouch.y - sTouch.startY;
+
+    if (!sTouch.released || (ABS_ALT((s32)dy) < SWIPE_MIN) || (ABS_ALT((s32)dy) <= ABS_ALT((s32)dx))) {
+        return 0;
+    }
+    return (dy < 0) ? 1 : -1;
+}
+
+// #endregion
+
+// #region Strip: clock, tabs and moon countdown along the bottom
+
+#define STRIP_Y NOTEBOOK_HEIGHT
+#define STRIP_DIGIT_W 22
+#define STRIP_DIGIT_H 30
+#define STRIP_TIME_W (4 * (STRIP_DIGIT_W * 5 / 8) + STRIP_DIGIT_W / 2)
+#define STRIP_TAB_SIZE 60
+#define STRIP_TAB_ICON 44
+
+typedef struct PanelTab {
+    s32 page;
+    TexturePtr icon;
+} PanelTab;
+
+static PanelTab sTabs[] = {
+    { DUAL_SCREEN_PAGE_NOTEBOOK, gItemIconBombersNotebookTex },
+    { DUAL_SCREEN_PAGE_STATUS, gItemIconOdolwasRemainsTex },
+};
+
+static s32 Panel_TabAvailable(s32 page) {
+    // The schedule only exists once Link has the notebook, as in the original
+    return (page != DUAL_SCREEN_PAGE_NOTEBOOK) || CHECK_QUEST_ITEM(QUEST_BOMBERS_NOTEBOOK);
+}
+
+static s32 Panel_TabCount(void) {
+    s32 i;
+    s32 count = 0;
+
+    for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
+        count += Panel_TabAvailable(sTabs[i].page);
+    }
+    return count;
+}
+
+static s32 Panel_StripCenterY(s32 canvasHeight) {
+    return STRIP_Y + 4 + (canvasHeight - STRIP_Y - 4) / 2;
+}
+
+// Tabs sit centred between the clock and the moon; visible tabs are packed together
+static s32 Panel_TabX(s32 index) {
+    return DUAL_SCREEN_CANVAS_WIDTH / 2 - (Panel_TabCount() * STRIP_TAB_SIZE) / 2 + index * STRIP_TAB_SIZE;
+}
+
+static void Panel_UpdateTabs(s32 canvasHeight) {
+    s32 i;
+    s32 index = 0;
+    s32 tabY = Panel_StripCenterY(canvasHeight) - STRIP_TAB_SIZE / 2;
+
+    for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
+        if (!Panel_TabAvailable(sTabs[i].page)) {
+            continue;
+        }
+        if (Panel_Tapped(Panel_TabX(index), tabY, STRIP_TAB_SIZE, STRIP_TAB_SIZE) && (sPage != sTabs[i].page)) {
+            sPage = sTabs[i].page;
+            Audio_PlaySfx(NA_SE_SY_DECIDE);
+        }
+        index++;
+    }
+    if (!Panel_TabAvailable(sPage)) {
+        sPage = DUAL_SCREEN_PAGE_STATUS;
+    }
+}
+
+static Gfx* Panel_DrawTabs(Gfx* gfx, s32 canvasHeight) {
+    s32 i;
+    s32 index = 0;
+    s32 tabY = Panel_StripCenterY(canvasHeight) - STRIP_TAB_SIZE / 2;
+
+    for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
+        s32 x;
+        s32 selected = (sTabs[i].page == sPage);
+        s32 grow;
+
+        if (!Panel_TabAvailable(sTabs[i].page)) {
+            continue;
+        }
+        x = Panel_TabX(index++);
+        grow = Panel_Pressing(x, tabY, STRIP_TAB_SIZE, STRIP_TAB_SIZE) ? 4 : 0;
+
+        // Gold ring behind the open page, like the pause menu's cursor
+        if (selected) {
+            gfx = Panel_SetTexturedMode(gfx, 255, 200, 60, 230);
+        } else {
+            gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, 50);
+        }
+        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, x + 4 - grow, tabY + 4 - grow,
+                              STRIP_TAB_SIZE - 8 + grow * 2, STRIP_TAB_SIZE - 8 + grow * 2);
+        if (selected) {
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+        } else {
+            gfx = Panel_SetTexturedMode(gfx, 190, 180, 160, 210);
+        }
+        gfx = Panel_DrawTexRGBA32(gfx, sTabs[i].icon, 32, 32, x + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow,
+                                  tabY + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow, STRIP_TAB_ICON + grow * 2,
+                                  STRIP_TAB_ICON + grow * 2);
+    }
+    return gfx;
+}
+
+static Gfx* Panel_DrawStrip(Gfx* gfx, s32 canvasHeight) {
     s32 day = CURRENT_DAY;
     s32 minutes = (s32)TIME_TO_MINUTES_F(CURRENT_TIME);
     s32 elapsed;
     s32 remaining;
-    s32 barY = NOTEBOOK_HEIGHT + (canvasHeight - NOTEBOOK_HEIGHT) / 2;
+    s32 centerY = Panel_StripCenterY(canvasHeight);
+    s32 segW = (DUAL_SCREEN_CANVAS_WIDTH - 40 - 2 * 4) / 3;
     s32 i;
 
     // Days start at dawn, so the moon falls at 6:00 on the morning after the Final Day
@@ -325,25 +493,22 @@ static Gfx* Panel_DrawTimeBar(Gfx* gfx, s32 canvasHeight) {
     elapsed = CLAMP(elapsed, 0, MOON_FALL_MINUTES);
     remaining = MOON_FALL_MINUTES - elapsed;
 
-    gfx = Panel_FillRect(gfx, 20, NOTEBOOK_HEIGHT + 2, DUAL_SCREEN_CANVAS_WIDTH - 40, 2, 90, 50, 20, 160);
+    // The three days as a timeline across the top of the strip, filled up to now
+    for (i = 0; i < 3; i++) {
+        s32 segX = 20 + i * (segW + 4);
+        s32 segFill = CLAMP(elapsed - i * 24 * 60, 0, 24 * 60) * segW / (24 * 60);
+
+        gfx = Panel_FillRect(gfx, segX, STRIP_Y, segW, 4, 90, 50, 20, 60);
+        if (segFill > 0) {
+            gfx = Panel_FillRect(gfx, segX, STRIP_Y, segFill, 4, (i == 2) ? 190 : 120, (i == 2) ? 40 : 70, 30, 220);
+        }
+    }
 
     // Day label from the three-day clock, then the time in the notebook's hand
     gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
-    gfx = Panel_DrawTex8b(gfx, sDayTextures[CLAMP(day, 0, 4)], G_IM_FMT_I, 48, 27, 24, barY - 20, 72, 40);
-    gfx = Panel_DrawNotebookTime(gfx, minutes / 60, minutes % 60, 104, barY - TIME_BAR_DIGIT_H / 2, TIME_BAR_DIGIT_W,
-                                 TIME_BAR_DIGIT_H);
-
-    // Three-day progress: one segment per day, filled up to now, between the clock and the moon
-    for (i = 0; i < 3; i++) {
-        s32 segX = TIME_BAR_SEGMENTS_X + i * (TIME_BAR_SEGMENT_W + 6);
-        s32 segFill = CLAMP(elapsed - i * 24 * 60, 0, 24 * 60) * TIME_BAR_SEGMENT_W / (24 * 60);
-
-        gfx = Panel_FillRect(gfx, segX, barY - 4, TIME_BAR_SEGMENT_W, 8, 90, 50, 20, 60);
-        if (segFill > 0) {
-            gfx = Panel_FillRect(gfx, segX, barY - 4, segFill, 8, (i == 2) ? 190 : 120, (i == 2) ? 40 : 70, 30,
-                                 220);
-        }
-    }
+    gfx = Panel_DrawTex8b(gfx, sDayTextures[CLAMP(day, 0, 4)], G_IM_FMT_I, 48, 27, 16, centerY - 17, 60, 34);
+    gfx = Panel_DrawNotebookTime(gfx, minutes / 60, minutes % 60, 82, centerY - STRIP_DIGIT_H / 2, STRIP_DIGIT_W,
+                                 STRIP_DIGIT_H);
 
     // Time left before the moon falls; it burns red in the final hours
     if (remaining <= 6 * 60) {
@@ -351,41 +516,39 @@ static Gfx* Panel_DrawTimeBar(Gfx* gfx, s32 canvasHeight) {
     } else {
         gfx = Panel_SetTexturedMode(gfx, 200, 170, 120, 255);
     }
-    gfx = Panel_DrawTex8b(gfx, gThreeDayClockMoonHourTex, G_IM_FMT_IA, 24, 24, TIME_BAR_MOON_X, barY - 18, 36, 36);
+    gfx = Panel_DrawTex8b(gfx, gThreeDayClockMoonHourTex, G_IM_FMT_IA, 24, 24,
+                          DUAL_SCREEN_CANVAS_WIDTH - 16 - STRIP_TIME_W - 38, centerY - 16, 32, 32);
     if (remaining <= 6 * 60) {
         gfx = Panel_SetTexturedMode(gfx, 200, 30, 20, 255);
     } else {
         gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
     }
-    gfx = Panel_DrawNotebookTime(gfx, remaining / 60, remaining % 60, DUAL_SCREEN_CANVAS_WIDTH - 24 - TIME_BAR_TIME_W,
-                                 barY - TIME_BAR_DIGIT_H / 2, TIME_BAR_DIGIT_W, TIME_BAR_DIGIT_H);
-    return gfx;
+    gfx = Panel_DrawNotebookTime(gfx, remaining / 60, remaining % 60, DUAL_SCREEN_CANVAS_WIDTH - 16 - STRIP_TIME_W,
+                                 centerY - STRIP_DIGIT_H / 2, STRIP_DIGIT_W, STRIP_DIGIT_H);
+
+    return Panel_DrawTabs(gfx, canvasHeight);
 }
 
-void DualScreen_Draw(PlayState* play) {
-    Gfx* start;
-    Gfx* gfx;
-    u8 tapped;
-    s32 swipe;
-    s32 canvasHeight = DualScreen_GetCanvasHeight();
-    s32 hasNotebook = CHECK_QUEST_ITEM(QUEST_BOMBERS_NOTEBOOK) != 0;
-    s32 frameBufferId = DualScreen_GetFrameBufferId();
+// #endregion
 
-    if (frameBufferId < 0) {
+void DualScreen_Update(PlayState* play) {
+    s32 canvasHeight = DualScreen_GetCanvasHeight();
+
+    if (!DualScreen_IsActive()) {
         return;
     }
-    DualScreen_ConsumeInput(&tapped, &swipe);
-    if (tapped && hasNotebook) {
-        sPage = (sPage + 1) % DUAL_SCREEN_PAGE_MAX;
-        Audio_PlaySfx(NA_SE_SY_CURSOR);
-    }
-    // The schedule only exists once Link has the notebook, as in the original
-    if (!hasNotebook) {
-        sPage = DUAL_SCREEN_PAGE_STATUS;
-    }
-    Panel_UpdateNotebookScroll((sPage == DUAL_SCREEN_PAGE_NOTEBOOK) ? swipe : DUAL_SCREEN_SWIPE_NONE);
+    Panel_PollTouch();
+    Panel_UpdateTabs(canvasHeight);
+    // Swipes above the strip scroll the schedule
+    Panel_UpdateNotebookScroll(((sPage == DUAL_SCREEN_PAGE_NOTEBOOK) && (sTouch.startY < STRIP_Y))
+                                   ? Panel_VerticalSwipe()
+                                   : 0);
+}
 
-    start = gfx = sPanelGfx[sPanelGfxIndex];
+static Gfx* Panel_Begin(Gfx** start, s32 frameBufferId, s32 canvasHeight) {
+    Gfx* gfx;
+
+    *start = gfx = sPanelGfx[sPanelGfxIndex];
     sPanelGfxIndex ^= 1;
 
     // Keep the HUD editor's per-element overrides away from these draws
@@ -395,15 +558,10 @@ void DualScreen_Draw(PlayState* play) {
     gfx = Gfx_SetupDL39(gfx);
     gDPSetScissor(gfx++, G_SC_NON_INTERLACE, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, canvasHeight);
     gDPSetTextureFilter(gfx++, G_TF_BILERP);
+    return Panel_DrawBackground(gfx, canvasHeight);
+}
 
-    gfx = Panel_DrawBackground(gfx, canvasHeight);
-    if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {
-        gfx = Panel_DrawNotebook(gfx, canvasHeight);
-    } else {
-        gfx = Panel_DrawStatus(gfx);
-    }
-    gfx = Panel_DrawTimeBar(gfx, canvasHeight);
-
+static void Panel_End(Gfx* start, Gfx* gfx, GraphicsContext* gfxCtx) {
     gDPPipeSync(gfx++);
     gsSPResetFB(gfx++);
     gSPEndDisplayList(gfx++);
@@ -413,9 +571,59 @@ void DualScreen_Draw(PlayState* play) {
         abort();
     }
 
-    OPEN_DISPS(play->state.gfxCtx);
+    OPEN_DISPS(gfxCtx);
     gSPDisplayList(OVERLAY_DISP++, start);
-    // Restore the main screen's scissor for the HUD drawn after us
+    // Restore the main screen's scissor for whatever is drawn after us
     gSPDisplayList(OVERLAY_DISP++, D_0E000000_TO_SEGMENTED(setScissor));
-    CLOSE_DISPS(play->state.gfxCtx);
+    CLOSE_DISPS(gfxCtx);
+}
+
+// Frames since gameplay last drew the panels; the title page takes over once it's clearly gone
+static s32 sFramesSincePlayDraw = 0;
+
+void DualScreen_Draw(PlayState* play) {
+    Gfx* start;
+    Gfx* gfx;
+    s32 canvasHeight = DualScreen_GetCanvasHeight();
+    s32 frameBufferId = DualScreen_GetFrameBufferId();
+
+    if (frameBufferId < 0) {
+        return;
+    }
+    sFramesSincePlayDraw = 0;
+
+    gfx = Panel_Begin(&start, frameBufferId, canvasHeight);
+    if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {
+        gfx = Panel_DrawNotebook(gfx, canvasHeight);
+    } else {
+        gfx = Panel_DrawStatus(gfx);
+    }
+    gfx = Panel_DrawStrip(gfx, canvasHeight);
+    Panel_End(start, gfx, play->state.gfxCtx);
+}
+
+void DualScreen_DrawIdle(GraphicsContext* gfxCtx) {
+    Gfx* start;
+    Gfx* gfx;
+    s32 canvasHeight;
+    s32 frameBufferId;
+
+    // Gameplay can skip a frame or two (transitions); only take over once it has really stopped
+    if (!DualScreen_IsActive() || (++sFramesSincePlayDraw < 4)) {
+        return;
+    }
+    frameBufferId = DualScreen_GetFrameBufferId();
+    if (frameBufferId < 0) {
+        return;
+    }
+    canvasHeight = DualScreen_GetCanvasHeight();
+
+    // The title screen's logo on the notebook's parchment
+    gfx = Panel_Begin(&start, frameBufferId, canvasHeight);
+    gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+    gfx = Panel_DrawTexRGBA32(gfx, gTitleScreenZeldaLogoTex, 144, 64, 320 - 216, canvasHeight / 2 - 120, 432, 192);
+    gfx = Panel_SetTexturedMode(gfx, 120, 60, 20, 255);
+    gfx = Panel_DrawTex8b(gfx, gTitleScreenMajorasMaskSubtitleTex, G_IM_FMT_I, 104, 16, 320 - 156,
+                          canvasHeight / 2 + 84, 312, 48);
+    Panel_End(start, gfx, gfxCtx);
 }

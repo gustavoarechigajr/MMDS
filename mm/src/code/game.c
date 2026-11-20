@@ -13,6 +13,7 @@
 #include "debug.h"
 
 #include "2s2h/GameInteractor/GameInteractor.h"
+#include "2s2h/Enhancements/DualScreen/DualScreen.h"
 
 #ifdef __ANDROID__
 void ResourceMgr_ReleaseGameStateTextures(void);
@@ -112,6 +113,7 @@ void GameState_Draw(GameState* gameState, GraphicsContext* gfxCtx) {
     CLOSE_DISPS(gfxCtx);
 
     Debug_DrawText(gfxCtx);
+    DualScreen_DrawIdle(gfxCtx);
 
     if (R_ENABLE_ARENA_DBG != 0) {
         SpeedMeter_DrawTimeEntries(&sGameSpeedMeter, gfxCtx);
