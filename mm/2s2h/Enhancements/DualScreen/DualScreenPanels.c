@@ -19,6 +19,8 @@
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include <libultraship/bridge/consolevariablebridge.h>
 #include <stdlib.h>
+#include <string.h>
+#include "message_data_static.h"
 #include <math.h>
 
 // Bombers' Notebook pieces from z_play_hireso.c
@@ -333,8 +335,6 @@ static Gfx* Panel_DrawBackground(Gfx* gfx, s32 canvasHeight) {
 
 static Gfx* Panel_DrawNotebook(Gfx* gfx, s32 canvasHeight) {
     sPanelNotebook.loadState = BOMBERS_NOTEBOOK_LOAD_STATE_DONE;
-    // No cursor on the panel: keep the selected-row highlight off every row
-    sPanelNotebook.cursorPageRow = BOMBERS_NOTEBOOK_PERSON_MAX;
 
     gDPPipeSync(gfx++);
     gDPSetCombineMode(gfx++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
@@ -576,6 +576,9 @@ static Gfx* Panel_DrawStrip(Gfx* gfx, s32 canvasHeight) {
     elapsed = CLAMP(elapsed, 0, MOON_FALL_MINUTES);
     remaining = MOON_FALL_MINUTES - elapsed;
 
+    // While the Inverted Song of Time slows time, the timeline and countdown turn a cool blue
+    s32 slowed = (gSaveContext.save.timeSpeedOffset == -2);
+
     // The three days as a timeline across the top of the strip, filled up to now
     for (i = 0; i < 3; i++) {
         s32 segX = 20 + i * (segW + 4);
@@ -583,7 +586,12 @@ static Gfx* Panel_DrawStrip(Gfx* gfx, s32 canvasHeight) {
 
         gfx = Panel_FillRect(gfx, segX, STRIP_Y, segW, 4, 90, 50, 20, 60);
         if (segFill > 0) {
-            gfx = Panel_FillRect(gfx, segX, STRIP_Y, segFill, 4, (i == 2) ? 190 : 120, (i == 2) ? 40 : 70, 30, 220);
+            if (slowed) {
+                gfx = Panel_FillRect(gfx, segX, STRIP_Y, segFill, 4, 60, 120, 220, 230);
+            } else {
+                gfx = Panel_FillRect(gfx, segX, STRIP_Y, segFill, 4, (i == 2) ? 190 : 120, (i == 2) ? 40 : 70, 30,
+                                     220);
+            }
         }
     }
 
@@ -603,6 +611,8 @@ static Gfx* Panel_DrawStrip(Gfx* gfx, s32 canvasHeight) {
                           DUAL_SCREEN_CANVAS_WIDTH - 16 - STRIP_TIME_W - 38, centerY - 16, 32, 32);
     if (remaining <= 6 * 60) {
         gfx = Panel_SetTexturedMode(gfx, 200, 30, 20, 255);
+    } else if (slowed) {
+        gfx = Panel_SetTexturedMode(gfx, 40, 90, 190, 255);
     } else {
         gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
     }
@@ -655,6 +665,9 @@ static PanelEquipTarget sEquipTargets[] = {
 };
 
 static void Panel_UpdateMapPage(PlayState* play);
+static void Panel_UpdateNotebookDetails(PlayState* play);
+static Gfx* Panel_DrawNotebookDetails(Gfx* gfx, PlayState* play);
+static void Panel_SetNotebookHighlight(void);
 static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play);
 
 static s32 sSelectedSlot = -1; // inventory slot picked by a tap, waiting for a button
@@ -1759,6 +1772,9 @@ void DualScreen_Update(PlayState* play) {
     Panel_UpdateNotebookScroll(((sPage == DUAL_SCREEN_PAGE_NOTEBOOK) && (sTouch.startY < STRIP_Y))
                                    ? Panel_VerticalSwipe()
                                    : 0);
+    if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {
+        Panel_UpdateNotebookDetails(play);
+    }
 }
 
 static Gfx* Panel_Begin(Gfx** start, s32 frameBufferId, s32 canvasHeight) {
@@ -1808,6 +1824,238 @@ static void Panel_End(Gfx* start, Gfx* gfx, GraphicsContext* gfxCtx) {
 
 // Frames since gameplay last drew the panels; the title page takes over once it's clearly gone
 static s32 sFramesSincePlayDraw = 0;
+
+// #region Notebook details: tap a portrait or a stamp to read it, and what's coming up next
+
+// Notebook data (z_play_hireso.c): per person, entries of 3 u16s (day|event, start time, end time)
+extern u16 sBombersNotebookEntries[BOMBERS_NOTEBOOK_PERSON_MAX][10 * 3];
+extern u16 sBombersNotebookTextIds[];
+extern s16 sBombersNotebookDayRectRectLeft[];
+
+#define NB_ENTRY_END 0x9999
+#define NB_ENTRY_POS_BELOW 0x4000
+#define NB_ENTRY_POS_ABOVE 0x8000
+#define NB_ENTRY_DAY(row, j) ((sBombersNotebookEntries[row][j] & 0xF00) >> 8)
+#define NB_ENTRY_EVENT(row, j) (sBombersNotebookEntries[row][j] & 0xFF)
+#define NB_ENTRY_START(row, j) (sBombersNotebookEntries[row][(j) + 1])
+#define NB_ENTRY_END_TIME(row, j) (sBombersNotebookEntries[row][(j) + 2])
+#define NB_ROWS_TOP 107
+#define NB_PHOTO_LEFT 49
+#define NB_PHOTO_RIGHT 113
+#define NB_BOX_Y 404
+#define NB_TEXT_MAX 320
+
+static s32 sNotebookPerson = -1; // picked person, or -1
+static s32 sNotebookEvent = -1;  // picked event (notebook event index), or -1 for the person's own description
+
+// Plain text of a game message: control codes dropped, line breaks become spaces. With firstLine, stops at the
+// first line break (the name or title line). Reads the message table only; never touches an open text box.
+static s32 Panel_MessageText(PlayState* play, u16 textId, char* out, s32 outSize, s32 firstLine) {
+    MessageTableEntry* entry = play->msgCtx.messageTableNES; // messageTable is only set while a text box is open
+    const u8* text;
+    s32 i;
+    s32 len = 0;
+
+    if (entry == NULL) {
+        return 0;
+    }
+    while ((entry->textId != 0xFFFF) && (entry->textId != textId)) {
+        entry++;
+    }
+    if (entry->textId == 0xFFFF) {
+        out[0] = '\0';
+        return 0;
+    }
+    text = (const u8*)entry->segment;
+    // 11-byte header (box type, icon, next message, prices)
+    for (i = 11; (i < (s32)entry->msgSize) && (len < outSize - 1); i++) {
+        u8 c = text[i];
+
+        if (c == 0xBF) { // end
+            break;
+        }
+        if ((c >= 0x10) && (c <= 0x13)) { // line / box breaks
+            if (firstLine && (len > 0)) {
+                break;
+            }
+            if ((len > 0) && (out[len - 1] != ' ')) {
+                out[len++] = ' ';
+            }
+            continue;
+        }
+        if ((c == 0x0A) || (c == 0x14)) { // one argument byte
+            i++;
+            continue;
+        }
+        if ((c >= 0x1B) && (c <= 0x1F)) { // two argument bytes
+            i += 2;
+            continue;
+        }
+        if ((c >= 0x20) && (c < 0x7F)) {
+            out[len++] = c;
+        }
+    }
+    while ((len > 0) && (out[len - 1] == ' ')) {
+        len--;
+    }
+    out[len] = '\0';
+    return len;
+}
+
+// Time of day as minutes after 6:00, so the notebook's day runs 0..1439
+static s32 Panel_NotebookMinutes(u16 time) {
+    return (s32)TIME_TO_MINUTES_F((u16)(time - CLOCK_TIME(6, 0)));
+}
+
+static s32 Panel_PersonMet(s32 person) {
+    return CHECK_WEEKEVENTREG(gBombersNotebookWeekEventFlags[person]);
+}
+
+// Which notebook row is shown at this y, or -1 (rows only line up while not scrolling)
+static s32 Panel_NotebookRowAt(f32 y) {
+    s32 r;
+
+    if ((sPanelNotebook.scrollAmount != 0) || (y < NB_ROWS_TOP)) {
+        return -1;
+    }
+    r = ((s32)y - NB_ROWS_TOP) / NOTEBOOK_ROW_HEIGHT;
+    return ((r < 7) && (sPanelNotebook.cursorPage + r < BOMBERS_NOTEBOOK_PERSON_MAX)) ? sPanelNotebook.cursorPage + r
+                                                                                        : -1;
+}
+
+static void Panel_UpdateNotebookDetails(PlayState* play) {
+    s32 person;
+    s32 rowTop;
+    s32 j;
+
+    if (!Panel_Tapped(0, NB_ROWS_TOP, 600, NB_BOX_Y - NB_ROWS_TOP)) {
+        return;
+    }
+    person = Panel_NotebookRowAt(sTouch.startY);
+    if ((person < 0) || !Panel_PersonMet(person)) {
+        sNotebookPerson = sNotebookEvent = -1;
+        return;
+    }
+    rowTop = NB_ROWS_TOP + (person - sPanelNotebook.cursorPage) * NOTEBOOK_ROW_HEIGHT;
+
+    // A known event's stamp on that row? (same box maths as the notebook)
+    for (j = 0; sBombersNotebookEntries[person][j] != NB_ENTRY_END; j += 3) {
+        s32 day = NB_ENTRY_DAY(person, j);
+        s32 left = sBombersNotebookDayRectRectLeft[day] + Panel_NotebookMinutes(NB_ENTRY_START(person, j)) / 10;
+        s32 right = sBombersNotebookDayRectRectLeft[day] + Panel_NotebookMinutes(NB_ENTRY_END_TIME(person, j)) / 10;
+        s32 yOffset = (sBombersNotebookEntries[person][j] & NB_ENTRY_POS_ABOVE)
+                          ? 8
+                          : ((sBombersNotebookEntries[person][j] & NB_ENTRY_POS_BELOW) ? 24 : 16);
+
+        if (right - left < 16) {
+            // Short boxes get a finger-sized target
+            left = (left + right) / 2 - 8;
+            right = left + 16;
+        }
+        if (Panel_InRect(sTouch.startX, sTouch.startY, left - 2, rowTop + yOffset - 10, right - left + 4, 30) &&
+            CHECK_WEEKEVENTREG(gBombersNotebookWeekEventFlags[NB_ENTRY_EVENT(person, j)])) {
+            sNotebookPerson = person;
+            sNotebookEvent = NB_ENTRY_EVENT(person, j);
+            Audio_PlaySfx(NA_SE_SY_CURSOR);
+            return;
+        }
+    }
+    // Otherwise the person: their own description
+    sNotebookEvent = -1;
+    sNotebookPerson = (sNotebookPerson == person && sNotebookEvent < 0 &&
+                       !Panel_InRect(sTouch.startX, sTouch.startY, NB_PHOTO_LEFT, 0, NB_PHOTO_RIGHT - NB_PHOTO_LEFT, 600))
+                          ? -1
+                          : person;
+    Audio_PlaySfx(NA_SE_SY_CURSOR);
+}
+
+// The soonest appointment today (for people you've met) that hasn't happened yet this cycle
+static s32 Panel_NextNotebookEntry(s32* outPerson, s32* outEntry) {
+    s32 now = Panel_NotebookMinutes(CURRENT_TIME);
+    s32 best = 0x7FFF;
+    s32 person;
+    s32 j;
+
+    for (person = 0; person < BOMBERS_NOTEBOOK_PERSON_MAX; person++) {
+        if (!Panel_PersonMet(person)) {
+            continue;
+        }
+        for (j = 0; sBombersNotebookEntries[person][j] != NB_ENTRY_END; j += 3) {
+            s32 start = Panel_NotebookMinutes(NB_ENTRY_START(person, j));
+            s32 end = Panel_NotebookMinutes(NB_ENTRY_END_TIME(person, j));
+
+            if ((NB_ENTRY_DAY(person, j) != CURRENT_DAY) || (end <= now) ||
+                CHECK_WEEKEVENTREG(gBombersNotebookWeekEventFlags[NB_ENTRY_EVENT(person, j)])) {
+                continue;
+            }
+            if (start < best) {
+                best = start;
+                *outPerson = person;
+                *outEntry = j;
+            }
+        }
+    }
+    return best != 0x7FFF;
+}
+
+// Picked person: the row highlight the notebook's own cursor would give (none otherwise)
+static void Panel_SetNotebookHighlight(void) {
+    sPanelNotebook.cursorPageRow =
+        ((sNotebookPerson >= sPanelNotebook.cursorPage) && (sNotebookPerson < sPanelNotebook.cursorPage + 7))
+            ? sNotebookPerson - sPanelNotebook.cursorPage
+            : BOMBERS_NOTEBOOK_PERSON_MAX;
+}
+
+static Gfx* Panel_DrawNotebookDetails(Gfx* gfx, PlayState* play) {
+    char title[64];
+    char body[NB_TEXT_MAX];
+    s32 person;
+    s32 j;
+
+    if (sNotebookPerson >= 0) {
+        // Text box in the message-box style: name, then the person's or event's description
+        Panel_MessageText(play, sBombersNotebookTextIds[sNotebookPerson], title, sizeof(title), true);
+        if (sNotebookEvent >= 0) {
+            Panel_MessageText(play, sBombersNotebookTextIds[sNotebookEvent], body, sizeof(body), false);
+        } else {
+            Panel_MessageText(play, sBombersNotebookTextIds[sNotebookPerson], body, sizeof(body), false);
+            // The description repeats the name first; drop it
+            if (strncmp(body, title, strlen(title)) == 0) {
+                memmove(body, body + strlen(title), strlen(body + strlen(title)) + 1);
+            }
+        }
+        gfx = Panel_FillRect(gfx, 8, NB_BOX_Y, 584, 474 - NB_BOX_Y, 0, 0, 0, 190);
+        gfx = Panel_SetSilhouetteMode(gfx, 255, 220, 120, 255);
+        gfx = Panel_DrawText(gfx, title, 20, NB_BOX_Y + 4, LOG_TEXT);
+        gfx = Panel_SetSilhouetteMode(gfx, 255, 255, 255, 255);
+        Panel_DrawTextWrapped(&gfx, body[0] == ' ' ? body + 1 : body, 20, NB_BOX_Y + 24, 560, 0.85f, 3);
+        return gfx;
+    }
+
+    // Nothing picked: what's next today
+    if (Panel_NextNotebookEntry(&person, &j)) {
+        s32 start = (s32)TIME_TO_MINUTES_F(NB_ENTRY_START(person, j));
+        char line[160];
+        char* p = line;
+
+        Panel_MessageText(play, sBombersNotebookTextIds[person], title, sizeof(title), true);
+        p = Panel_FormatNumber(p, start / 60);
+        *p++ = ':';
+        *p++ = '0' + (start % 60) / 10;
+        *p++ = '0' + (start % 60) % 10;
+        *p++ = ' ';
+        *p++ = ' ';
+        strcpy(p, title);
+        gfx = Panel_FillRect(gfx, 8, 444, 584, 30, 0, 0, 0, 150);
+        gfx = Panel_SetSilhouetteMode(gfx, 255, 220, 120, 255);
+        gfx = Panel_DrawText(gfx, "Next", 20, 450, LOG_SMALL);
+        gfx = Panel_SetSilhouetteMode(gfx, 255, 255, 255, 255);
+        gfx = Panel_DrawText(gfx, line, 74, 450, LOG_SMALL);
+    }
+    return gfx;
+}
+
+// #endregion
 
 // #region Map: the pause menu's world map, with Link's region and tap-to-warp owl statues
 
@@ -2260,6 +2508,7 @@ static Gfx* Panel_DrawWarmupPage(Gfx* gfx, PlayState* play, s32 canvasHeight) {
             sQuestLogView = view;
             break;
         case WARMUP_NOTEBOOK:
+            Panel_SetNotebookHighlight();
             gfx = Panel_DrawNotebook(gfx, canvasHeight);
             break;
         default:
@@ -2295,7 +2544,9 @@ void DualScreen_Draw(PlayState* play) {
     } else if (sPage == DUAL_SCREEN_PAGE_MAP) {
         gfx = Panel_DrawMapPage(gfx, play);
     } else if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {
+        Panel_SetNotebookHighlight();
         gfx = Panel_DrawNotebook(gfx, canvasHeight);
+        gfx = Panel_DrawNotebookDetails(gfx, play);
     } else {
         gfx = Panel_DrawQuestLog(gfx);
     }
