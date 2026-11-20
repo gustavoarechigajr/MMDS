@@ -131,10 +131,8 @@ static Gfx* Panel_DrawCounter(Gfx* gfx, s32 value, s32 rightX, s32 y, s32 digitW
 // "HH:MM" in the Bombers' Notebook digits
 // The digit glyphs sit in wide cells; advance by the inked width so "HH:MM" reads as one word
 static s32 Panel_NotebookGlyphAdvance(s32 glyph, s32 digitW) {
-    if (glyph == 10) {
-        return digitW * 3 / 8; // colon
-    }
-    return (glyph == 1) ? digitW * 7 / 16 : digitW * 5 / 8;
+    // Fixed-width digits, like a clock face, so the time doesn't jitter as it changes
+    return (glyph == 10) ? digitW / 2 : digitW * 5 / 8;
 }
 
 static void Panel_NotebookTimeGlyphs(s32 hours, s32 minutes, s32 glyphs[5]) {
@@ -143,18 +141,6 @@ static void Panel_NotebookTimeGlyphs(s32 hours, s32 minutes, s32 glyphs[5]) {
     glyphs[2] = 10;
     glyphs[3] = minutes / 10;
     glyphs[4] = minutes % 10;
-}
-
-static s32 Panel_NotebookTimeWidth(s32 hours, s32 minutes, s32 digitW) {
-    s32 glyphs[5];
-    s32 width = 0;
-    s32 i;
-
-    Panel_NotebookTimeGlyphs(hours, minutes, glyphs);
-    for (i = 0; i < 5; i++) {
-        width += Panel_NotebookGlyphAdvance(glyphs[i], digitW);
-    }
-    return width;
 }
 
 static Gfx* Panel_DrawNotebookTime(Gfx* gfx, s32 hours, s32 minutes, s32 x, s32 y, s32 digitW, s32 digitH) {
@@ -315,8 +301,10 @@ static Gfx* Panel_DrawStatus(Gfx* gfx) {
 }
 
 // Moon countdown is right-aligned to the same 24-unit margin as the day label on the left
-// (sized for the widest reading, so the bar doesn't shift as the digits change)
-#define TIME_BAR_MOON_X (DUAL_SCREEN_CANVAS_WIDTH - 24 - (4 * 21 * 5 / 8 + 21 * 3 / 8) - 40)
+#define TIME_BAR_DIGIT_W 22
+#define TIME_BAR_DIGIT_H 30
+#define TIME_BAR_TIME_W (4 * (TIME_BAR_DIGIT_W * 5 / 8) + TIME_BAR_DIGIT_W / 2)
+#define TIME_BAR_MOON_X (DUAL_SCREEN_CANVAS_WIDTH - 24 - TIME_BAR_TIME_W - 40)
 #define TIME_BAR_SEGMENTS_X 200
 #define TIME_BAR_SEGMENT_W ((TIME_BAR_MOON_X - 24 - TIME_BAR_SEGMENTS_X - 2 * 6) / 3)
 
@@ -342,7 +330,8 @@ static Gfx* Panel_DrawTimeBar(Gfx* gfx, s32 canvasHeight) {
     // Day label from the three-day clock, then the time in the notebook's hand
     gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
     gfx = Panel_DrawTex8b(gfx, sDayTextures[CLAMP(day, 0, 4)], G_IM_FMT_I, 48, 27, 24, barY - 20, 72, 40);
-    gfx = Panel_DrawNotebookTime(gfx, minutes / 60, minutes % 60, 104, barY - 16, 24, 32);
+    gfx = Panel_DrawNotebookTime(gfx, minutes / 60, minutes % 60, 104, barY - TIME_BAR_DIGIT_H / 2, TIME_BAR_DIGIT_W,
+                                 TIME_BAR_DIGIT_H);
 
     // Three-day progress: one segment per day, filled up to now, between the clock and the moon
     for (i = 0; i < 3; i++) {
@@ -368,9 +357,8 @@ static Gfx* Panel_DrawTimeBar(Gfx* gfx, s32 canvasHeight) {
     } else {
         gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
     }
-    gfx = Panel_DrawNotebookTime(gfx, remaining / 60, remaining % 60,
-                                 DUAL_SCREEN_CANVAS_WIDTH - 24 - Panel_NotebookTimeWidth(remaining / 60, remaining % 60, 21),
-                                 barY - 14, 21, 28);
+    gfx = Panel_DrawNotebookTime(gfx, remaining / 60, remaining % 60, DUAL_SCREEN_CANVAS_WIDTH - 24 - TIME_BAR_TIME_W,
+                                 barY - TIME_BAR_DIGIT_H / 2, TIME_BAR_DIGIT_W, TIME_BAR_DIGIT_H);
     return gfx;
 }
 
