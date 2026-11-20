@@ -13,6 +13,8 @@
 #include "interface/icon_item_field_static/icon_item_field_static.h"
 #include "archives/icon_item_24_static/icon_item_24_static_yar.h"
 #include "z64horse.h"
+#include "interface/icon_item_jpn_static/icon_item_jpn_static.h"
+#include "interface/icon_item_dungeon_static/icon_item_dungeon_static.h"
 #include "BenPort.h"
 #include "2s2h/BenGui/HudEditor.h"
 #include "DualScreen.h"
@@ -665,6 +667,8 @@ static PanelEquipTarget sEquipTargets[] = {
 };
 
 static void Panel_UpdateMapPage(PlayState* play);
+s32 Map_GetDungeonSceneIndex(PlayState* play);
+static s32 Panel_CurrentDungeon(PlayState* play);
 static void Panel_UpdateNotebookDetails(PlayState* play);
 static Gfx* Panel_DrawNotebookDetails(Gfx* gfx, PlayState* play);
 static void Panel_SetNotebookHighlight(void);
@@ -1188,6 +1192,7 @@ typedef enum QuestLogView {
     QUEST_LOG_MAIN,
     QUEST_LOG_MASKS,
     QUEST_LOG_COLLECT,
+    QUEST_LOG_SIDE,
     QUEST_LOG_VIEW_MAX
 } QuestLogView;
 
@@ -1338,7 +1343,7 @@ static const char* sCollectHints[] = {
 };
 
 static s32 sQuestLogView = QUEST_LOG_MAIN;
-static s32 sQuestLogSelected[QUEST_LOG_VIEW_MAX] = { -1, -1, -1 };
+static s32 sQuestLogSelected[QUEST_LOG_VIEW_MAX] = { -1, -1, -1, -1 };
 
 static s32 Panel_HintsOn(void) {
     return CVarGetInteger(CVAR_HINTS, 0);
@@ -1492,7 +1497,7 @@ static void Panel_FormatFraction(char* out, s32 have, s32 total) {
 
 // #region Layout
 
-#define LOG_HEADER_W 128
+#define LOG_HEADER_W 128 // four views + the Lens fit in 640
 #define LOG_LENS_X 580
 #define LOG_ROW_H 60
 #define LOG_MASK_SLOT 56
@@ -1514,10 +1519,10 @@ static void Panel_UpdateQuestLog(PlayState* play) {
         return;
     }
 
-    if (sQuestLogView == QUEST_LOG_MAIN) {
-        for (i = 0; i < ARRAY_COUNT(sQuestRegions); i++) {
+    if ((sQuestLogView == QUEST_LOG_MAIN) || (sQuestLogView == QUEST_LOG_SIDE)) {
+        for (i = 0; i < ((sQuestLogView == QUEST_LOG_MAIN) ? 6 : 4); i++) {
             if (Panel_Tapped(0, LOG_TOP + i * LOG_ROW_H, DUAL_SCREEN_CANVAS_WIDTH, LOG_ROW_H)) {
-                sQuestLogSelected[QUEST_LOG_MAIN] = i;
+                sQuestLogSelected[sQuestLogView] = i;
                 Audio_PlaySfx(NA_SE_SY_CURSOR);
             }
         }
@@ -1540,7 +1545,7 @@ static void Panel_UpdateQuestLog(PlayState* play) {
 }
 
 static Gfx* Panel_DrawLogHeader(Gfx* gfx) {
-    static const char* sViewNames[] = { "Main Quest", "Masks", "Collection" };
+    static const char* sViewNames[] = { "Main Quest", "Masks", "Collection", "Side Quests" };
     s32 i;
 
     for (i = 0; i < QUEST_LOG_VIEW_MAX; i++) {
@@ -1724,6 +1729,114 @@ static Gfx* Panel_DrawLogCollect(Gfx* gfx) {
     return Panel_DrawLogHint(gfx, (selected >= 0) ? sCollectHints[selected] : NULL);
 }
 
+// #region Side quests: this cycle's progress, from the Bombers' Notebook's own event flags (they reset with time)
+
+typedef struct SideStep {
+    u16 flag;
+    const char* label;
+    const char* hint;
+} SideStep;
+
+#define SIDE_FLAG(name) WEEKEVENTREG_BOMBERS_NOTEBOOK_EVENT_##name
+
+static SideStep sSideSteps[] = {
+    // Anju and Kafei
+    { SIDE_FLAG(MET_ANJU), "Meet Anju at the Stock Pot Inn",
+      "Anju runs the Stock Pot Inn in East Clock Town. Talk to her at the front desk." },
+    { SIDE_FLAG(PROMISED_TO_MEET_KAFEI), "Promise to meet Kafei",
+      "Wear the Kafei's Mask and talk to Anju on Day 1 at 13:50. Meet her in the inn's kitchen at 23:30." },
+    { SIDE_FLAG(DEPOSITED_LETTER_TO_KAFEI), "Mail the Letter to Kafei",
+      "Drop Anju's letter in any of Clock Town's post boxes before the Postman's rounds." },
+    { SIDE_FLAG(MET_KAFEI), "Meet Kafei", "After the letter is delivered, ring the bell at the Laundry Pool's back room on Day 2." },
+    { SIDE_FLAG(ESCAPED_SAKONS_HIDEOUT), "Help Kafei at Sakon's Hideout",
+      "Be at Ikana Canyon's hideout on the Final Day by 18:00 and help Kafei get his mask back." },
+    { SIDE_FLAG(RECEIVED_COUPLES_MASK), "Witness the couple's reunion",
+      "Wait in Anju's room at the inn until Kafei returns before dawn on the Final Day." },
+    // Romani Ranch
+    { SIDE_FLAG(MET_ROMANI), "Meet Romani", "Clear the boulder on Milk Road with a Powder Keg to reach the ranch." },
+    { SIDE_FLAG(PROMISED_TO_HELP_WITH_ALIENS), "Promise to help Romani", "Learn Epona's Song from Romani, then agree to help." },
+    { SIDE_FLAG(DEFENDED_AGAINST_ALIENS), "Defend the ranch from Them",
+      "Be at the barn by 2:30 on the first night and shoot every ghost with your bow until dawn." },
+    { SIDE_FLAG(MET_CREMIA), "Meet Cremia", "Talk to Cremia at the ranch on Day 2." },
+    { SIDE_FLAG(ESCORTED_CREMIA), "Escort Cremia's milk delivery",
+      "Ride with Cremia at 18:00 on Day 2 and shoot the Gorman brothers before they reach the wagon." },
+    // The Old Lady and Sakon
+    { SIDE_FLAG(RECEIVED_BLAST_MASK), "Save the Old Lady from Sakon",
+      "Stop Sakon in North Clock Town at midnight on the first night. Hit him before he grabs her bag." },
+    { SIDE_FLAG(RECEIVED_ALL_NIGHT_MASK), "Buy the All-Night Mask",
+      "With the Old Lady safe, the Curiosity Shop sells this mask on the Final Night." },
+    // The Postman
+    { SIDE_FLAG(MET_POSTMAN), "Meet the Postman", "He lives in the Post Office in West Clock Town." },
+    { SIDE_FLAG(RECEIVED_POSTMAN_HP), "Beat the Postman's game", "Wear the Bunny Hood and stop his counting game at exactly 10 seconds." },
+    { SIDE_FLAG(RECEIVED_POSTMANS_HAT), "Free the Postman",
+      "Hand him the Express Mail to Mama on the Final Day. He flees town and leaves his hat." },
+};
+
+typedef struct SideQuest {
+    const char* name;
+    u8 icon;
+    u8 firstStep;
+    u8 numSteps;
+} SideQuest;
+
+static SideQuest sSideQuests[] = {
+    { "Anju and Kafei", ITEM_MASK_COUPLE, 0, 6 },
+    { "Romani Ranch", ITEM_MASK_ROMANI, 6, 5 },
+    { "The Old Lady", ITEM_MASK_BLAST, 11, 2 },
+    { "The Postman", ITEM_MASK_POSTMAN, 13, 3 },
+};
+
+static s32 Panel_SideNextStep(SideQuest* quest) {
+    s32 i;
+
+    for (i = 0; i < quest->numSteps; i++) {
+        if (!CHECK_WEEKEVENTREG(sSideSteps[quest->firstStep + i].flag)) {
+            return quest->firstStep + i;
+        }
+    }
+    return -1;
+}
+
+static Gfx* Panel_DrawLogSide(Gfx* gfx) {
+    s32 i;
+    s32 k;
+    const char* hint = NULL;
+
+    for (i = 0; i < ARRAY_COUNT(sSideQuests); i++) {
+        SideQuest* quest = &sSideQuests[i];
+        s32 y = LOG_TOP + i * LOG_ROW_H;
+        s32 next = Panel_SideNextStep(quest);
+
+        if (sQuestLogSelected[QUEST_LOG_SIDE] == i) {
+            gfx = Panel_FillRect(gfx, 8, y + 2, DUAL_SCREEN_CANVAS_WIDTH - 16, LOG_ROW_H - 4, 255, 200, 60, 70);
+            hint = (next >= 0) ? sSideSteps[next].hint : "Done for this cycle.";
+        }
+        gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, (next < 0) ? 255 : 200);
+        gfx = Panel_DrawItemIcon(gfx, quest->icon, 40, y + LOG_ROW_H / 2, 46);
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+        gfx = Panel_DrawText(gfx, quest->name, 72, y + 6, LOG_TEXT);
+        for (k = 0; k < quest->numSteps; k++) {
+            s32 done = CHECK_WEEKEVENTREG(sSideSteps[quest->firstStep + k].flag);
+
+            gfx = Panel_SetTexturedMode(gfx, done ? 255 : 90, done ? 190 : 60, done ? 40 : 30, done ? 255 : 70);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, 260 + k * 24, y + 8, 18, 18);
+        }
+        if (next < 0) {
+            gfx = Panel_SetSilhouetteMode(gfx, 170, 120, 20, 255);
+            gfx = Panel_DrawText(gfx, "Complete this cycle", 72, y + 30, LOG_SMALL);
+        } else {
+            gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
+            gfx = Panel_DrawText(gfx, sSideSteps[next].label, 72, y + 30, LOG_SMALL);
+        }
+    }
+    gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 200);
+    gfx = Panel_DrawText(gfx, "Side quests reset when you play the Song of Time.", 20, LOG_TOP + 4 * LOG_ROW_H + 14,
+                         LOG_SMALL);
+    return Panel_DrawLogHint(gfx, hint);
+}
+
+// #endregion
+
 static Gfx* Panel_DrawQuestLog(Gfx* gfx) {
     gfx = Panel_DrawLogHeader(gfx);
     if (sQuestLogView == QUEST_LOG_MAIN) {
@@ -1731,6 +1844,9 @@ static Gfx* Panel_DrawQuestLog(Gfx* gfx) {
     }
     if (sQuestLogView == QUEST_LOG_MASKS) {
         return Panel_DrawLogMasks(gfx);
+    }
+    if (sQuestLogView == QUEST_LOG_SIDE) {
+        return Panel_DrawLogSide(gfx);
     }
     return Panel_DrawLogCollect(gfx);
 }
@@ -1762,7 +1878,7 @@ void DualScreen_Update(PlayState* play) {
     } else if (sPage == DUAL_SCREEN_PAGE_STATUS) {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
         Panel_UpdateQuestLog(play);
-    } else if (sPage == DUAL_SCREEN_PAGE_MAP) {
+    } else if ((sPage == DUAL_SCREEN_PAGE_MAP) && (Panel_CurrentDungeon(play) < 0)) {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
         Panel_UpdateMapPage(play);
     } else {
@@ -2067,6 +2183,7 @@ extern s16 gVtxPageMapWorldQuadsWidth[];
 extern s16 gVtxPageMapWorldQuadsHeight[];
 extern u16 sOwlWarpEntrancesForMods[];
 extern s32 gHorseIsMounted;
+s32 Map_GetDungeonSceneIndex(PlayState* play);
 
 // Index ranges in the tables above: 15 clouds, then 11 regions, then 10 owl statues
 #define MAP_QUAD_CLOUDS 0
@@ -2471,6 +2588,92 @@ static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play) {
 
 // #endregion
 
+// #region Dungeon card: shown on the Map tab inside a temple (or its boss room)
+
+static TexturePtr sDungeonTitleTex[] = {
+    gPauseWoodfallTitleENGTex,
+    gPauseSnowheadTitleENGTex,
+    gPauseGreatBayTitleENGTex,
+    gPauseStoneTowerTitleENGTex,
+};
+
+static TexturePtr sDungeonFairyTex[] = {
+    gDungeonStrayFairyWoodfallIconTex,
+    gDungeonStrayFairySnowheadIconTex,
+    gDungeonStrayFairyGreatBayIconTex,
+    gDungeonStrayFairyStoneTowerIconTex,
+};
+
+// Which of the four temples Link is in (dungeon or boss room), or -1
+static s32 Panel_CurrentDungeon(PlayState* play) {
+    s32 index = Map_GetDungeonSceneIndex(play);
+    s32 preview = CVarGetInteger("gEnhancements.DualScreen.PreviewDungeon", 0); // testing: 1-4 forces a temple
+
+    if (preview > 0) {
+        return CLAMP(preview, 1, 4) - 1;
+    }
+    if (index < 0) {
+        return -1;
+    }
+    // The table lists the four temples, Stone Tower inverted, then the four boss rooms
+    if (index == 4) {
+        return 3;
+    }
+    return (index > 4) ? index - 5 : index;
+}
+
+static Gfx* Panel_DrawDungeonItem(Gfx* gfx, s32 have, TexturePtr tex, s32 texW, s32 x, s32 y, const char* label) {
+    gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, have ? 70 : 35);
+    gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, x, y, 84, 84);
+    gfx = Panel_SetTexturedMode(gfx, have ? 255 : 120, have ? 255 : 120, have ? 255 : 120, have ? 255 : 110);
+    gfx = Panel_DrawTexRGBA32(gfx, tex, texW, texW, x + 12, y + 12, 60, 60);
+    gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, have ? 255 : 120);
+    return Panel_DrawText(gfx, label, x + 42 - Panel_TextWidth(label, 32, LOG_SMALL) / 2, y + 90, LOG_SMALL);
+}
+
+static Gfx* Panel_DrawDungeonCard(Gfx* gfx, s32 dungeon) {
+    char count[16];
+    s32 keys = DUNGEON_KEY_COUNT(dungeon);
+    s32 fairies = CLAMP(gSaveContext.save.saveInfo.inventory.strayFairies[dungeon], 0, 15);
+    s32 x = 40;
+
+    // The pause menu's title for this temple
+    gfx = Panel_SetTexturedMode(gfx, 120, 60, 20, 255);
+    gfx = Panel_DrawTex8b(gfx, sDungeonTitleTex[dungeon], G_IM_FMT_IA, 128, 16, 320 - 256, 30, 512, 64);
+    gfx = Panel_FillRect(gfx, 20, 110, DUAL_SCREEN_CANVAS_WIDTH - 40, 2, 90, 50, 20, 120);
+
+    gfx = Panel_DrawDungeonItem(gfx, CHECK_DUNGEON_ITEM(DUNGEON_MAP, dungeon), gQuestIconDungeonMapTex, 24, x, 140,
+                                "Map");
+    x += 140;
+    gfx = Panel_DrawDungeonItem(gfx, CHECK_DUNGEON_ITEM(DUNGEON_COMPASS, dungeon), gQuestIconCompassTex, 24, x,
+                                140, "Compass");
+    x += 140;
+    gfx = Panel_DrawDungeonItem(gfx, CHECK_DUNGEON_ITEM(DUNGEON_BOSS_KEY, dungeon), gQuestIconBossKeyTex, 24, x,
+                                140, "Boss Key");
+    x += 140;
+    gfx = Panel_DrawDungeonItem(gfx, keys > 0, gQuestIconSmallKeyTex, 24, x, 140, "Small Keys");
+    Panel_FormatNumber(count, CLAMP_MIN(keys, 0));
+    gfx = Panel_SetTexturedMode(gfx, 0, 0, 0, 150);
+    gfx = Panel_DrawCounter(gfx, CLAMP_MIN(keys, 0), x + 84, 196, 13, 26);
+    gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+    gfx = Panel_DrawCounter(gfx, CLAMP_MIN(keys, 0), x + 82, 194, 13, 26);
+
+    // Stray fairies rescued here, gold once all 15 are back
+    gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+    gfx = Panel_DrawTexRGBA32(gfx, sDungeonFairyTex[dungeon], 32, 24, 150, 290, 96, 72);
+    Panel_FormatFraction(count, fairies, 15);
+    if (fairies >= 15) {
+        gfx = Panel_SetSilhouetteMode(gfx, 190, 130, 20, 255);
+    } else {
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+    }
+    gfx = Panel_DrawText(gfx, count, 270, 306, 1.8f);
+    gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
+    return Panel_DrawText(gfx, "Stray Fairies", 270, 346, LOG_TEXT);
+}
+
+// #endregion
+
 // Every page once, behind the real one, over the first frames: uploads all their textures up front so the
 // first visit to a tab doesn't stall the game (and the audio) while textures load
 typedef enum PanelWarmup {
@@ -2480,6 +2683,7 @@ typedef enum PanelWarmup {
     WARMUP_LOG_MAIN,
     WARMUP_LOG_MASKS,
     WARMUP_LOG_COLLECT,
+    WARMUP_LOG_SIDE,
     WARMUP_NOTEBOOK,
     WARMUP_MAP,
     WARMUP_DONE
@@ -2503,6 +2707,7 @@ static Gfx* Panel_DrawWarmupPage(Gfx* gfx, PlayState* play, s32 canvasHeight) {
         case WARMUP_LOG_MAIN:
         case WARMUP_LOG_MASKS:
         case WARMUP_LOG_COLLECT:
+        case WARMUP_LOG_SIDE:
             sQuestLogView = QUEST_LOG_MAIN + (sWarmupStep - WARMUP_LOG_MAIN);
             gfx = Panel_DrawQuestLog(gfx);
             sQuestLogView = view;
@@ -2541,6 +2746,8 @@ void DualScreen_Draw(PlayState* play) {
         gfx = Panel_DrawEquipPage(gfx, play, ITEM_NUM_SLOTS);
     } else if (sPage == DUAL_SCREEN_PAGE_QUEST) {
         gfx = Panel_DrawQuestPage(gfx);
+    } else if ((sPage == DUAL_SCREEN_PAGE_MAP) && (Panel_CurrentDungeon(play) >= 0)) {
+        gfx = Panel_DrawDungeonCard(gfx, Panel_CurrentDungeon(play));
     } else if (sPage == DUAL_SCREEN_PAGE_MAP) {
         gfx = Panel_DrawMapPage(gfx, play);
     } else if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {
