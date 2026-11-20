@@ -784,7 +784,7 @@ static Gfx* Panel_DrawEquipTargets(Gfx* gfx) {
                           60);
     if (GET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_B) < ITEM_FD) {
         gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 160);
-        gfx = Panel_DrawItemIcon(gfx, GET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_B), FACE_X, FACE_Y + FACE_GAP, 40);
+        gfx = Panel_DrawItemIcon(gfx, GET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_B), FACE_X - 1, FACE_Y + FACE_GAP - 1, 52);
     }
 
     for (i = 0; i < ARRAY_COUNT(sEquipTargets); i++) {
@@ -812,7 +812,8 @@ static Gfx* Panel_DrawEquipTargets(Gfx* gfx) {
                               t->y - t->size / 2 - highlight * 2, t->size + highlight * 4, t->size + highlight * 4);
         if (item < ITEM_FD) {
             gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
-            gfx = Panel_DrawItemIcon(gfx, item, t->x, t->y, t->size * 3 / 4);
+            // Fill the button face; the face sits a touch up-left of the texture's centre because of its shadow
+            gfx = Panel_DrawItemIcon(gfx, item, t->x - 1, t->y - 1, t->size * 9 / 10);
         } else if (Panel_TargetLabel(t->target) != NULL) {
             gfx = Panel_SetTexturedMode(gfx, 255, 240, 0, 255);
             gfx = Panel_DrawTex8b(gfx, Panel_TargetLabel(t->target), G_IM_FMT_IA, 32, 32, t->x - t->size / 2,
