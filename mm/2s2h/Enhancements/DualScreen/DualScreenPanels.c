@@ -551,10 +551,10 @@ static Gfx* Panel_DrawStrip(Gfx* gfx, s32 canvasHeight) {
 
 #define GRID_COLS 6
 #define GRID_ROWS 4
-#define GRID_SLOT 68
+#define GRID_SLOT 70
 #define GRID_X 16
 #define GRID_Y ((STRIP_Y - GRID_ROWS * GRID_SLOT) / 2)
-#define GRID_ICON 52
+#define GRID_ICON 64
 
 // Same values as the pause menu's PauseEquipCButton / PauseEquipDButton
 #define EQUIP_TARGET_C_LEFT 0
@@ -572,23 +572,26 @@ typedef struct PanelEquipTarget {
 
 // The face buttons in the Thor's Nintendo layout: X (C-Left) on top, Y (C-Right) left, A right, B bottom,
 // RB (C-Down) on the shoulder, and the D-pad below
-#define FACE_X 530
+#define FACE_X 540
 #define FACE_Y 150
 #define FACE_GAP 62
-#define DPAD_Y 372
+#define DPAD_Y 368
 
 static PanelEquipTarget sEquipTargets[] = {
-    { EQUIP_TARGET_C_LEFT, FACE_X, FACE_Y - FACE_GAP, 60 },
-    { EQUIP_TARGET_C_RIGHT, FACE_X - FACE_GAP, FACE_Y, 60 },
-    { EQUIP_TARGET_C_DOWN, FACE_X + 70, FACE_Y - FACE_GAP - 44, 48 },
-    { EQUIP_TARGET_D_RIGHT, FACE_X + 56, DPAD_Y, 52 },
-    { EQUIP_TARGET_D_RIGHT + 1, FACE_X - 56, DPAD_Y, 52 }, // D-Left
-    { EQUIP_TARGET_D_RIGHT + 2, FACE_X, DPAD_Y + 56, 52 }, // D-Down
-    { EQUIP_TARGET_D_UP, FACE_X, DPAD_Y - 56, 52 },
+    { EQUIP_TARGET_C_LEFT, FACE_X, FACE_Y - FACE_GAP, 70 },
+    { EQUIP_TARGET_C_RIGHT, FACE_X - FACE_GAP, FACE_Y, 70 },
+    { EQUIP_TARGET_C_DOWN, FACE_X + 70, FACE_Y - FACE_GAP - 44, 56 },
+    { EQUIP_TARGET_D_RIGHT, FACE_X + 60, DPAD_Y, 60 },
+    { EQUIP_TARGET_D_RIGHT + 1, FACE_X - 60, DPAD_Y, 60 }, // D-Left
+    { EQUIP_TARGET_D_RIGHT + 2, FACE_X, DPAD_Y + 60, 60 }, // D-Down
+    { EQUIP_TARGET_D_UP, FACE_X, DPAD_Y - 60, 60 },
 };
 
 static s32 sSelectedSlot = -1; // inventory slot picked by a tap, waiting for a button
 static s32 sDragSlot = -1;     // inventory slot under the finger since it went down
+static s32 sUseTarget = -1;    // button held down on the screen, pressed in-game for as long as it's held
+
+static u16 sTargetButtons[] = { BTN_CLEFT, BTN_CDOWN, BTN_CRIGHT, BTN_DRIGHT, BTN_DLEFT, BTN_DDOWN, BTN_DUP };
 
 static s32 Panel_DpadEquipsOn(void) {
     return CVarGetInteger("gEnhancements.Dpad.DpadEquips", 0);
@@ -707,6 +710,32 @@ static void Panel_Equip(PlayState* play, s32 slot, s32 target) {
     }
 }
 
+// Holding an equipped button presses it in-game, MM3D style: pressed on touch, held while the finger stays,
+// released with the finger (so the bow aims while held and fires on release)
+static void Panel_UpdateTouchUse(PlayState* play) {
+    Input* input = &play->state.input[0];
+    u16 button;
+
+    if (sTouch.began && (sSelectedSlot < 0) && CVarGetInteger("gEnhancements.DualScreen.TouchUse", 1)) {
+        s32 target = Panel_TargetAt(sTouch.startX, sTouch.startY);
+
+        if ((target >= 0) && (Panel_TargetItem(target) < ITEM_FD)) {
+            sUseTarget = target;
+            input->press.button |= sTargetButtons[target];
+        }
+    }
+    if (sUseTarget < 0) {
+        return;
+    }
+    button = sTargetButtons[sUseTarget];
+    if (sTouch.down) {
+        input->cur.button |= button;
+    } else {
+        input->rel.button |= button;
+        sUseTarget = -1;
+    }
+}
+
 static void Panel_UpdateEquipPage(PlayState* play, s32 firstSlot) {
     s32 slot;
     s32 target;
@@ -715,6 +744,7 @@ static void Panel_UpdateEquipPage(PlayState* play, s32 firstSlot) {
         slot = Panel_GridSlot(firstSlot, sTouch.startX, sTouch.startY);
         sDragSlot = ((slot >= 0) && Panel_SlotEquippable(slot)) ? slot : -1;
     }
+    Panel_UpdateTouchUse(play);
     if (!sTouch.released) {
         return;
     }
@@ -777,14 +807,14 @@ static Gfx* Panel_DrawEquipTargets(Gfx* gfx) {
 
     // A and B as they sit on the controller, for orientation (not equip targets)
     gfx = Panel_SetTexturedMode(gfx, 100, 200, 255, 120);
-    gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, FACE_X + FACE_GAP - 30, FACE_Y - 30, 60,
-                          60);
+    gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, FACE_X + FACE_GAP - 34, FACE_Y - 34, 68,
+                          68);
     gfx = Panel_SetTexturedMode(gfx, 100, 255, 120, 120);
-    gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, FACE_X - 30, FACE_Y + FACE_GAP - 30, 60,
-                          60);
+    gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, FACE_X - 34, FACE_Y + FACE_GAP - 34, 68,
+                          68);
     if (GET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_B) < ITEM_FD) {
         gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 160);
-        gfx = Panel_DrawItemIcon(gfx, GET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_B), FACE_X - 1, FACE_Y + FACE_GAP - 1, 52);
+        gfx = Panel_DrawItemIcon(gfx, GET_CUR_FORM_BTN_ITEM(EQUIP_SLOT_B), FACE_X - 1, FACE_Y + FACE_GAP - 1, 64);
     }
 
     for (i = 0; i < ARRAY_COUNT(sEquipTargets); i++) {
@@ -798,7 +828,8 @@ static Gfx* Panel_DrawEquipTargets(Gfx* gfx) {
         item = Panel_TargetItem(t->target);
         // Buttons light up while an item is picked or dragged over them
         highlight = ((sSelectedSlot >= 0) || (sDragSlot >= 0 && sTouch.moved)) ? 1 : 0;
-        if (sTouch.down && sTouch.moved && (sDragSlot >= 0) && (Panel_TargetAt(sTouch.x, sTouch.y) == t->target)) {
+        if ((sTouch.down && sTouch.moved && (sDragSlot >= 0) && (Panel_TargetAt(sTouch.x, sTouch.y) == t->target)) ||
+            (sUseTarget == t->target)) {
             highlight = 2;
         }
 
@@ -813,7 +844,7 @@ static Gfx* Panel_DrawEquipTargets(Gfx* gfx) {
         if (item < ITEM_FD) {
             gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
             // Fill the button face; the face sits a touch up-left of the texture's centre because of its shadow
-            gfx = Panel_DrawItemIcon(gfx, item, t->x - 1, t->y - 1, t->size * 9 / 10);
+            gfx = Panel_DrawItemIcon(gfx, item, t->x - 1, t->y - 1, t->size * 19 / 20);
         } else if (Panel_TargetLabel(t->target) != NULL) {
             gfx = Panel_SetTexturedMode(gfx, 255, 240, 0, 255);
             gfx = Panel_DrawTex8b(gfx, Panel_TargetLabel(t->target), G_IM_FMT_IA, 32, 32, t->x - t->size / 2,
@@ -842,10 +873,10 @@ static Gfx* Panel_DrawEquipPage(Gfx* gfx, PlayState* play, s32 firstSlot) {
 
         if (slot == sSelectedSlot) {
             gfx = Panel_SetTexturedMode(gfx, 255, 200, 60, pulse);
-            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, cx - 32, cy - 32, 64, 64);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, cx - 35, cy - 35, 70, 70);
         } else {
             gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, shown ? 70 : 35);
-            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, cx - 29, cy - 29, 58, 58);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, cx - 32, cy - 32, 64, 64);
         }
         if (!shown || ((slot == sDragSlot) && sTouch.moved)) {
             continue;
@@ -853,7 +884,7 @@ static Gfx* Panel_DrawEquipPage(Gfx* gfx, PlayState* play, s32 firstSlot) {
         // Equipped items sit in the pause menu's frame, drawn behind the icon
         if (Panel_SlotEquipped(slot)) {
             gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
-            gfx = Panel_DrawTex8b(gfx, gEquippedItemOutlineTex, G_IM_FMT_IA, 32, 32, cx - 31, cy - 31, 62, 62);
+            gfx = Panel_DrawTex8b(gfx, gEquippedItemOutlineTex, G_IM_FMT_IA, 32, 32, cx - 34, cy - 34, 68, 68);
         }
         // Items this form can't use are greyed out, as in the pause menu
         if (Panel_SlotEquippable(slot)) {
@@ -862,7 +893,7 @@ static Gfx* Panel_DrawEquipPage(Gfx* gfx, PlayState* play, s32 firstSlot) {
             gfx = Panel_SetTexturedMode(gfx, 120, 120, 120, 170);
         }
         gfx = Panel_DrawItemIcon(gfx, item, cx, cy, GRID_ICON);
-        gfx = Panel_DrawAmmo(gfx, slot, cx + 28, cy + 6);
+        gfx = Panel_DrawAmmo(gfx, slot, cx + 33, cy + 8);
     }
 
     gfx = Panel_DrawEquipTargets(gfx);
@@ -891,7 +922,7 @@ void DualScreen_Update(PlayState* play) {
     } else if (sPage == DUAL_SCREEN_PAGE_MASKS) {
         Panel_UpdateEquipPage(play, ITEM_NUM_SLOTS);
     } else {
-        sSelectedSlot = sDragSlot = -1;
+        sSelectedSlot = sDragSlot = sUseTarget = -1;
     }
     // Swipes above the strip scroll the schedule
     Panel_UpdateNotebookScroll(((sPage == DUAL_SCREEN_PAGE_NOTEBOOK) && (sTouch.startY < STRIP_Y))

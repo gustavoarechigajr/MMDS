@@ -1373,8 +1373,15 @@ void BenMenu::AddEnhancements() {
         .CVar("gEnhancements.DualScreen.Enabled")
         .Options(CheckboxOptions()
                      .DefaultValue(true)
-                     .Tooltip("On dual-screen devices, shows the Bombers' Notebook, the moon countdown and your "
-                              "collection on the second screen. Tap it to switch pages, swipe to scroll."));
+                     .Tooltip("On dual-screen devices, the second screen becomes a touch screen: items and masks "
+                              "(drag or tap to equip), the Bombers' Notebook, your collection and the moon "
+                              "countdown."));
+    AddWidget(path, "Use Items From Second Screen", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.TouchUse")
+        .Options(CheckboxOptions()
+                     .DefaultValue(true)
+                     .Tooltip("Tapping or holding an equipped button on the second screen presses that button, "
+                              "as on Majora's Mask 3D's touch screen."));
     AddWidget(path, "Bow Reticle", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Graphics.BowReticle")
         .Options(CheckboxOptions().Tooltip("Gives the bow a reticle when you draw an arrow."));
