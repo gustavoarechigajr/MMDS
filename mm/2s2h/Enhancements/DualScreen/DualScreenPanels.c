@@ -36,7 +36,7 @@ extern f32 sNESFontWidths[];
 #define CHECK_GIVEN_MASK_ON_MOON(maskIndex) \
     (gSaveContext.masksGivenOnMoon[sMasksGivenOnMoonBits[maskIndex] >> 8] & (u8)sMasksGivenOnMoonBits[maskIndex])
 
-#define PANEL_GFX_SIZE 0x4000
+#define PANEL_GFX_SIZE 0x8000
 #define NOTEBOOK_HEIGHT 480
 #define NOTEBOOK_MAX_PAGE (BOMBERS_NOTEBOOK_PERSON_MAX - 4) // Same scroll range as the notebook itself
 #define NOTEBOOK_ROW_HEIGHT 48
@@ -1765,6 +1765,50 @@ static void Panel_End(Gfx* start, Gfx* gfx, GraphicsContext* gfxCtx) {
 // Frames since gameplay last drew the panels; the title page takes over once it's clearly gone
 static s32 sFramesSincePlayDraw = 0;
 
+// Every page once, behind the real one, over the first frames: uploads all their textures up front so the
+// first visit to a tab doesn't stall the game (and the audio) while textures load
+typedef enum PanelWarmup {
+    WARMUP_ITEMS,
+    WARMUP_MASKS,
+    WARMUP_SONGS,
+    WARMUP_LOG_MAIN,
+    WARMUP_LOG_MASKS,
+    WARMUP_LOG_COLLECT,
+    WARMUP_NOTEBOOK,
+    WARMUP_DONE
+} PanelWarmup;
+
+static s32 sWarmupStep = WARMUP_ITEMS;
+
+static Gfx* Panel_DrawWarmupPage(Gfx* gfx, PlayState* play, s32 canvasHeight) {
+    s32 view = sQuestLogView;
+
+    switch (sWarmupStep) {
+        case WARMUP_ITEMS:
+            gfx = Panel_DrawEquipPage(gfx, play, 0);
+            break;
+        case WARMUP_MASKS:
+            gfx = Panel_DrawEquipPage(gfx, play, ITEM_NUM_SLOTS);
+            break;
+        case WARMUP_SONGS:
+            gfx = Panel_DrawQuestPage(gfx);
+            break;
+        case WARMUP_LOG_MAIN:
+        case WARMUP_LOG_MASKS:
+        case WARMUP_LOG_COLLECT:
+            sQuestLogView = QUEST_LOG_MAIN + (sWarmupStep - WARMUP_LOG_MAIN);
+            gfx = Panel_DrawQuestLog(gfx);
+            sQuestLogView = view;
+            break;
+        default:
+            gfx = Panel_DrawNotebook(gfx, canvasHeight);
+            break;
+    }
+    sWarmupStep++;
+    // Cover it up again; only the real page is shown
+    return Panel_DrawBackground(gfx, canvasHeight);
+}
+
 void DualScreen_Draw(PlayState* play) {
     Gfx* start;
     Gfx* gfx;
@@ -1777,6 +1821,9 @@ void DualScreen_Draw(PlayState* play) {
     sFramesSincePlayDraw = 0;
 
     gfx = Panel_Begin(&start, frameBufferId, canvasHeight);
+    if (sWarmupStep < WARMUP_DONE) {
+        gfx = Panel_DrawWarmupPage(gfx, play, canvasHeight);
+    }
     if (sPage == DUAL_SCREEN_PAGE_ITEMS) {
         gfx = Panel_DrawEquipPage(gfx, play, 0);
     } else if (sPage == DUAL_SCREEN_PAGE_MASKS) {
