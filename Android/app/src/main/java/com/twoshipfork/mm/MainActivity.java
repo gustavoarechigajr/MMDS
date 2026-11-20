@@ -105,6 +105,8 @@ public class MainActivity extends SDLActivity{
         setupControllerOverlay();
         applyImmersiveFullscreen();
         attachController();
+
+        dualScreenManager = new DualScreenManager(this);
     }
 
     @Override
@@ -121,7 +123,26 @@ public class MainActivity extends SDLActivity{
     protected void onResume() {
         super.onResume();
         applyImmersiveFullscreen();
+        if (dualScreenManager != null) {
+            dualScreenManager.start();
+        }
     }
+
+    @Override
+    protected void onPause() {
+        // The presentation lives on another display and would keep a stale frame up in the background
+        if (dualScreenManager != null) {
+            dualScreenManager.stop();
+        }
+        super.onPause();
+    }
+
+    private DualScreenManager dualScreenManager;
+
+    // Second-screen panels, see mm/2s2h/Enhancements/DualScreen/DualScreen.cpp
+    public static native void nativeDualScreenSurfaceChanged(android.view.Surface surface, int width, int height);
+    public static native void nativeDualScreenSurfaceDestroyed();
+    public static native void nativeDualScreenTouch(int action, float x, float y);
 
     @Override
     public void onWindowFocusChanged(boolean hasFocus) {

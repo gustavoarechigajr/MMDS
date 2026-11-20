@@ -29,6 +29,7 @@
 #include <stb_image.h>
 
 #include <fast/interpreter.h>
+#include "2s2h/Enhancements/DualScreen/DualScreen.h"
 #include <fast/backends/gfx_rendering_api.h>
 #include <fast/Fast3dWindow.h>
 
@@ -1237,6 +1238,8 @@ void RunCommands(Gfx* Commands, int time, int step, int denom, int count) {
         wnd->DrawAndRunGraphicsCommands(Commands, mtx_replacements);
         intp->mInterpolationIndex++;
     }
+    // Copy this frame's second-screen panels to the secondary display, if there is one
+    DualScreen_PresentFrame();
     ImGui::PopStyleColor();
 }
 

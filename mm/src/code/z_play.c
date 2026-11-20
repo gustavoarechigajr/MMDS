@@ -27,6 +27,7 @@ u8 sMotionBlurStatus;
 #include "sys_cfb.h"
 
 #include "z64bombers_notebook.h"
+#include "2s2h/Enhancements/DualScreen/DualScreen.h"
 #include "z64debug_display.h"
 #include "z64malloc.h"
 #include "z64quake.h"
@@ -1143,6 +1144,11 @@ void Play_Update(PlayState* this) {
 void Play_PostWorldDraw(PlayState* this) {
     if (IS_PAUSED(&this->pauseCtx)) {
         KaleidoScopeCall_Draw(this);
+    }
+
+    // 2S2H [Enhancement] Second-screen panels on dual-screen devices, drawn into their own framebuffer
+    if (DualScreen_IsActive()) {
+        DualScreen_Draw(this);
     }
 
     if (gSaveContext.gameMode == GAMEMODE_NORMAL) {

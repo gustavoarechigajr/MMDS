@@ -209,6 +209,11 @@ endif()
 if(CMAKE_SYSTEM_NAME STREQUAL "Android" AND DEFINED ANDROID_APP_VERSION_NAME)
     target_compile_definitions(${PROJECT_NAME} PRIVATE ANDROID_APP_VERSION_NAME="${ANDROID_APP_VERSION_NAME}")
 endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Android")
+    # Second-screen panels present through their own EGL surface
+    target_link_libraries(${PROJECT_NAME} PRIVATE EGL GLESv2 android)
+endif()
 ################################################################################
 # MSVC runtime library
 ################################################################################

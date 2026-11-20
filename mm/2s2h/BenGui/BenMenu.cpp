@@ -1369,6 +1369,12 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Disable Final Day Quakes", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.A11y.NoFinalDayQuakes")
         .Options(CheckboxOptions().Tooltip("Earthquakes will not occur on the final day."));
+    AddWidget(path, "Second Screen Panels", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.Enabled")
+        .Options(CheckboxOptions()
+                     .DefaultValue(true)
+                     .Tooltip("On dual-screen devices, shows the Bombers' Notebook, the moon countdown and your "
+                              "collection on the second screen. Tap it to switch pages, swipe to scroll."));
     AddWidget(path, "Bow Reticle", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Graphics.BowReticle")
         .Options(CheckboxOptions().Tooltip("Gives the bow a reticle when you draw an arrow."));
