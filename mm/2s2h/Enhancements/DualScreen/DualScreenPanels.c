@@ -1848,6 +1848,7 @@ static s32 sSelectedOwl = -1;
 // #region Map view: zoom and pan, Google Maps style (pinch or the +/- buttons, drag to pan)
 
 #define MAP_ZOOM_MAX 4.0f
+#define CVAR_MAP_CLOUDS "gEnhancements.DualScreen.MapClouds"
 #define MAP_BTN 44
 
 static f32 sMapZoom = 1.0f;
@@ -2014,6 +2015,12 @@ static void Panel_UpdateMapPage(PlayState* play) {
         Audio_PlaySfx(NA_SE_SY_CURSOR);
         return;
     }
+    if (Panel_Tapped(MAP_BTN_X, MAP_BTN_Y(3), MAP_BTN, MAP_BTN)) {
+        // The pause map hides regions until you buy their Tingle map; this shows the whole map instead
+        CVarSetInteger(CVAR_MAP_CLOUDS, !CVarGetInteger(CVAR_MAP_CLOUDS, 1));
+        Audio_PlaySfx(NA_SE_SY_CURSOR);
+        return;
+    }
     if (Panel_Tapped(MAP_BTN_X, MAP_BTN_Y(2), MAP_BTN, MAP_BTN)) {
         // Recentre on Link, zooming in if the whole map is showing
         s32 region = Panel_CurrentRegion(play);
@@ -2093,7 +2100,7 @@ static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play) {
         s32 w;
         s32 h;
 
-        if (gSaveContext.save.saveInfo.worldMapCloudVisibility & gBitFlags[i]) {
+        if (!CVarGetInteger(CVAR_MAP_CLOUDS, 1) || (gSaveContext.save.saveInfo.worldMapCloudVisibility & gBitFlags[i])) {
             continue;
         }
         x = Panel_MapX(sVtxPageMapWorldQuadsX[quad]);
@@ -2140,14 +2147,26 @@ static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play) {
     gDPSetScissor(gfx++, G_SC_NON_INTERLACE, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, DualScreen_GetCanvasHeight());
 
     // Zoom in, zoom out and recentre on Link, stacked in the map's corner
-    for (i = 0; i < 3; i++) {
-        static const char* sMapButtonLabels[] = { "+", "-", "" };
+    for (i = 0; i < 4; i++) {
+        static const char* sMapButtonLabels[] = { "+", "-", "", "" };
         s32 pressed = Panel_Pressing(MAP_BTN_X, MAP_BTN_Y(i), MAP_BTN, MAP_BTN);
 
         gfx = Panel_SetTexturedMode(gfx, 255, 245, 215, pressed ? 255 : 220);
         gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, MAP_BTN_X, MAP_BTN_Y(i), MAP_BTN,
                               MAP_BTN);
-        if (i < 2) {
+        if (i == 3) {
+            // Clouds toggle: one of the map's own clouds, faded while the clouds are off
+            s32 on = CVarGetInteger(CVAR_MAP_CLOUDS, 1);
+
+            gDPPipeSync(gfx++);
+            gDPSetCombineLERP(gfx++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0, PRIMITIVE,
+                              ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0);
+            gDPSetPrimColor(gfx++, 0, 0, on ? 215 : 150, on ? 235 : 150, on ? 235 : 150, on ? 255 : 150);
+            gDPSetEnvColor(gfx++, 40, 60, 100, 0);
+            gfx = Panel_DrawTex8b(gfx, sCloudTextures[8], G_IM_FMT_IA, gVtxPageMapWorldQuadsWidth[8],
+                                  gVtxPageMapWorldQuadsHeight[8], MAP_BTN_X + 6, MAP_BTN_Y(i) + 10, MAP_BTN - 12,
+                                  MAP_BTN - 20);
+        } else if (i < 2) {
             gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
             gfx = Panel_DrawText(gfx, sMapButtonLabels[i],
                                  MAP_BTN_X + (MAP_BTN - Panel_TextWidth(sMapButtonLabels[i], 1, 1.6f)) / 2 - 1,

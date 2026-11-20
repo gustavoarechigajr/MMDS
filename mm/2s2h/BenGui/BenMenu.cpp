@@ -1376,6 +1376,12 @@ void BenMenu::AddEnhancements() {
                      .Tooltip("On dual-screen devices, the second screen becomes a touch screen: items and masks "
                               "(drag or tap to equip), the Bombers' Notebook, your collection and the moon "
                               "countdown."));
+    AddWidget(path, "Second Screen Map Clouds", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.MapClouds")
+        .Options(CheckboxOptions()
+                     .DefaultValue(true)
+                     .Tooltip("Hide regions on the second screen's map until you buy their map from Tingle, as the "
+                              "pause menu does. Also toggled by the cloud button on the map."));
     AddWidget(path, "Use Items From Second Screen", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.DualScreen.TouchUse")
         .Options(CheckboxOptions()
