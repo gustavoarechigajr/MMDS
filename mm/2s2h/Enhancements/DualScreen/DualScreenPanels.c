@@ -205,6 +205,15 @@ static s32 Panel_DrawTextWrapped(Gfx** gfxP, const char* str, s32 x, s32 y, s32 
 
 // #endregion
 
+// libultraship flips scissor rectangles vertically inside off-screen framebuffers (asking for rows 12-368 clips to
+// 189-545 on a 557-tall canvas), so ask for the mirrored rows to get the ones we mean
+static Gfx* Panel_SetScissor(Gfx* gfx, s32 x0, s32 y0, s32 x1, s32 y1) {
+    s32 canvasHeight = DualScreen_GetCanvasHeight();
+
+    gDPSetScissor(gfx++, G_SC_NON_INTERLACE, x0, canvasHeight - y1, x1, canvasHeight - y0);
+    return gfx;
+}
+
 static Gfx* Panel_FillRect(Gfx* gfx, s32 x, s32 y, s32 w, s32 h, u8 r, u8 g, u8 b, u8 a) {
     gDPPipeSync(gfx++);
     gDPSetCombineMode(gfx++, G_CC_PRIMITIVE, G_CC_PRIMITIVE);
@@ -334,7 +343,8 @@ static Gfx* Panel_DrawNotebook(Gfx* gfx, s32 canvasHeight) {
     BombersNotebook_DrawHeaders(&gfx);
     BombersNotebook_DrawColumns(&gfx);
 
-    gDPSetScissor(gfx++, G_SC_NON_INTERLACE, 0, 86, 600, 450);
+    // The panel is taller than the notebook's 480 rows, so let the last visible row show in full
+    gfx = Panel_SetScissor(gfx, 0, 86, 600, 468);
     BombersNotebook_DrawRows(&sPanelNotebook, &gfx);
     gDPPipeSync(gfx++);
     gDPSetScissor(gfx++, G_SC_NON_INTERLACE, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, canvasHeight);
@@ -2086,7 +2096,7 @@ static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play) {
     gDPSetTextureLUT(gfx++, G_TT_NONE);
 
     // Everything on the map is clipped to it while zoomed
-    gDPSetScissor(gfx++, G_SC_NON_INTERLACE, MAP_X, MAP_Y, MAP_X + MAP_W, MAP_Y + MAP_H);
+    gfx = Panel_SetScissor(gfx, MAP_X, MAP_Y, MAP_X + MAP_W, MAP_Y + MAP_H);
 
     // Clouds over regions whose Tingle map you haven't bought, in the pause menu's colours
     gDPSetCombineLERP(gfx++, PRIMITIVE, ENVIRONMENT, TEXEL0, ENVIRONMENT, TEXEL0, 0, PRIMITIVE, 0, PRIMITIVE,
