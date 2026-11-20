@@ -75,7 +75,7 @@ std::stack<std::string> currentDir;
 #define RATIO_Y(activeFb, dims) \
     ((mFbActive ? activeFb->second.applied_height : dims.height) / (2.0f * HALF_SCREEN_HEIGHT(activeFb)))
 
-#define TEXTURE_CACHE_MAX_SIZE 1024
+#define TEXTURE_CACHE_MAX_SIZE 4096 // 2S2H [Dual Screen] HD packs overflow 1024 entries and reload textures mid-play
 
 namespace Fast {
 
