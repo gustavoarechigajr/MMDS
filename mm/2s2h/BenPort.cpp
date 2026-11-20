@@ -1239,6 +1239,7 @@ void RunCommands(Gfx* Commands, int time, int step, int denom, int count) {
         intp->mInterpolationT = (float)time / denom;
         wnd->DrawAndRunGraphicsCommands(Commands, mtx_replacements);
         intp->mInterpolationIndex++;
+        DualScreen_CountFrame();
         if (i == 0) {
             // The second-screen panels don't move between interpolated frames: draw them once, show them now
             DualScreen_SkipPanelReplays();

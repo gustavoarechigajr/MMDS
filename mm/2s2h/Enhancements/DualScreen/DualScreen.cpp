@@ -120,6 +120,36 @@ static RegisterShipInitFunc sDualScreenSongsInit(RegisterDualScreenSongs, {});
 
 // #endregion
 
+// #region Frame rate and target health
+
+namespace {
+std::atomic<int32_t> sFps{ 0 };
+int32_t sFramesThisSecond = 0;
+std::chrono::steady_clock::time_point sSecondStart = std::chrono::steady_clock::now();
+} // namespace
+
+extern "C" void DualScreen_CountFrame(void) {
+    auto now = std::chrono::steady_clock::now();
+    sFramesThisSecond++;
+    if (now - sSecondStart >= std::chrono::seconds(1)) {
+        sFps = sFramesThisSecond;
+        sFramesThisSecond = 0;
+        sSecondStart = now;
+    }
+}
+
+extern "C" int32_t DualScreen_GetFPS(void) {
+    return sFps;
+}
+
+u8 GetActorMaxHealth(Actor* actor); // EnemyHealthBars.cpp
+
+extern "C" uint8_t DualScreen_ActorMaxHealth(Actor* actor) {
+    return GetActorMaxHealth(actor);
+}
+
+// #endregion
+
 extern "C" uint8_t DualScreen_PollTouch(DualScreenTouchEvent* event) {
     std::lock_guard<std::mutex> lock(sTouchMutex);
     if (sTouchQueue.empty()) {

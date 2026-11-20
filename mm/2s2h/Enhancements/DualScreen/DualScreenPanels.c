@@ -23,6 +23,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "message_data_static.h"
+#include "assets/2s2h_assets.h"
 #include <math.h>
 
 // Bombers' Notebook pieces from z_play_hireso.c
@@ -448,36 +449,71 @@ static s32 Panel_VerticalSwipe(void) {
 #define STRIP_DIGIT_W 22
 #define STRIP_DIGIT_H 30
 #define STRIP_TIME_W (4 * (STRIP_DIGIT_W * 5 / 8) + STRIP_DIGIT_W / 2)
-#define STRIP_TAB_SIZE 56
-#define STRIP_TAB_ICON 44
+// Seven tabs only fit between the clock and the countdown when a little smaller
+#define STRIP_TAB_SIZE ((Panel_TabCount() > 6) ? 50 : 56)
+#define STRIP_TAB_ICON ((Panel_TabCount() > 6) ? 40 : 44)
+#define CVAR_LEFT_HANDED "gEnhancements.DualScreen.LeftHanded"
 
 typedef struct PanelTab {
     s32 page;
-    u8 iconItem;
+    u8 iconItem; // ITEM_NONE: the rando tracker's chest
+    const char* cvar; // hides the tab when 0
 } PanelTab;
 
 static PanelTab sTabs[] = {
-    { DUAL_SCREEN_PAGE_ITEMS, ITEM_OCARINA_OF_TIME },
-    { DUAL_SCREEN_PAGE_MASKS, ITEM_MASK_DEKU },
-    { DUAL_SCREEN_PAGE_QUEST, ITEM_SONG_TIME },
-    { DUAL_SCREEN_PAGE_MAP, ITEM_COMPASS }, // ITEM_COMPASS's icon is the dungeon map
-    { DUAL_SCREEN_PAGE_STATUS, ITEM_REMAINS_ODOLWA },
-    { DUAL_SCREEN_PAGE_NOTEBOOK, ITEM_BOMBERS_NOTEBOOK },
+    { DUAL_SCREEN_PAGE_ITEMS, ITEM_OCARINA_OF_TIME, "gEnhancements.DualScreen.Tab.Items" },
+    { DUAL_SCREEN_PAGE_MASKS, ITEM_MASK_DEKU, "gEnhancements.DualScreen.Tab.Masks" },
+    { DUAL_SCREEN_PAGE_QUEST, ITEM_SONG_TIME, "gEnhancements.DualScreen.Tab.Songs" },
+    { DUAL_SCREEN_PAGE_MAP, ITEM_COMPASS, "gEnhancements.DualScreen.Tab.Map" }, // ITEM_COMPASS's icon is the map
+    { DUAL_SCREEN_PAGE_STATUS, ITEM_REMAINS_ODOLWA, "gEnhancements.DualScreen.Tab.QuestLog" },
+    { DUAL_SCREEN_PAGE_NOTEBOOK, ITEM_BOMBERS_NOTEBOOK, "gEnhancements.DualScreen.Tab.Notebook" },
+    { DUAL_SCREEN_PAGE_RANDO, ITEM_NONE, "gEnhancements.DualScreen.Tab.Checks" },
 };
 
+// Read once per frame: tab visibility and handedness
+static u8 sTabShown[ARRAY_COUNT(sTabs)];
+static s32 sTabsShownCount = 0;
+static s32 sLeftHanded = 0;
+
+static void Panel_ReadSettings(void) {
+    s32 i;
+
+    sLeftHanded = CVarGetInteger(CVAR_LEFT_HANDED, 0);
+    sTabsShownCount = 0;
+    for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
+        s32 page = sTabs[i].page;
+
+        // The schedule only exists once Link has the notebook, as in the original; the checks only in a rando save
+        sTabShown[i] = CVarGetInteger(sTabs[i].cvar, 1) &&
+                       ((page != DUAL_SCREEN_PAGE_NOTEBOOK) || CHECK_QUEST_ITEM(QUEST_BOMBERS_NOTEBOOK)) &&
+                       ((page != DUAL_SCREEN_PAGE_RANDO) || DualScreen_RandoActive());
+        sTabsShownCount += sTabShown[i];
+    }
+    // Never leave the strip empty
+    if (sTabsShownCount == 0) {
+        sTabShown[0] = 1;
+        sTabsShownCount = 1;
+    }
+}
+
 static s32 Panel_TabAvailable(s32 page) {
-    // The schedule only exists once Link has the notebook, as in the original
-    return (page != DUAL_SCREEN_PAGE_NOTEBOOK) || CHECK_QUEST_ITEM(QUEST_BOMBERS_NOTEBOOK);
+    s32 i;
+
+    for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
+        if (sTabs[i].page == page) {
+            return sTabShown[i];
+        }
+    }
+    return 0;
+}
+
+// Left-handed puts the tabs in reverse, so the ones used most sit under the left thumb
+static PanelTab* Panel_TabInOrder(s32 i) {
+    return &sTabs[sLeftHanded ? (ARRAY_COUNT(sTabs) - 1 - i) : i];
 }
 
 static s32 Panel_TabCount(void) {
-    s32 i;
-    s32 count = 0;
-
-    for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
-        count += Panel_TabAvailable(sTabs[i].page);
-    }
-    return count;
+    return sTabsShownCount;
 }
 
 static s32 Panel_StripCenterY(s32 canvasHeight) {
@@ -495,17 +531,24 @@ static void Panel_UpdateTabs(s32 canvasHeight) {
     s32 tabY = Panel_StripCenterY(canvasHeight) - STRIP_TAB_SIZE / 2;
 
     for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
-        if (!Panel_TabAvailable(sTabs[i].page)) {
+        PanelTab* tab = Panel_TabInOrder(i);
+
+        if (!Panel_TabAvailable(tab->page)) {
             continue;
         }
-        if (Panel_Tapped(Panel_TabX(index), tabY, STRIP_TAB_SIZE, STRIP_TAB_SIZE) && (sPage != sTabs[i].page)) {
-            sPage = sTabs[i].page;
+        if (Panel_Tapped(Panel_TabX(index), tabY, STRIP_TAB_SIZE, STRIP_TAB_SIZE) && (sPage != tab->page)) {
+            sPage = tab->page;
             Audio_PlaySfx(NA_SE_SY_DECIDE);
         }
         index++;
     }
     if (!Panel_TabAvailable(sPage)) {
-        sPage = DUAL_SCREEN_PAGE_ITEMS;
+        for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
+            if (sTabShown[i]) {
+                sPage = sTabs[i].page;
+                break;
+            }
+        }
     }
 }
 
@@ -515,11 +558,12 @@ static Gfx* Panel_DrawTabs(Gfx* gfx, s32 canvasHeight) {
     s32 tabY = Panel_StripCenterY(canvasHeight) - STRIP_TAB_SIZE / 2;
 
     for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
+        PanelTab* tab = Panel_TabInOrder(i);
         s32 x;
-        s32 selected = (sTabs[i].page == sPage);
+        s32 selected = (tab->page == sPage);
         s32 grow;
 
-        if (!Panel_TabAvailable(sTabs[i].page)) {
+        if (!Panel_TabAvailable(tab->page)) {
             continue;
         }
         x = Panel_TabX(index++);
@@ -538,7 +582,13 @@ static Gfx* Panel_DrawTabs(Gfx* gfx, s32 canvasHeight) {
         } else {
             gfx = Panel_SetTexturedMode(gfx, 190, 180, 160, 210);
         }
-        if (sTabs[i].iconItem == ITEM_COMPASS) {
+        if (tab->iconItem == ITEM_NONE) {
+            gfx = Panel_DrawTexRGBA32(gfx, gChestTrackerIcon, 32, 32, x + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow,
+                                      tabY + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow, STRIP_TAB_ICON + grow * 2,
+                                      STRIP_TAB_ICON + grow * 2);
+            continue;
+        }
+        if (tab->iconItem == ITEM_COMPASS) {
             // A 24x24 quest icon rather than a 32x32 item icon
             gfx = Panel_DrawTexRGBA32(gfx, gItemIcons[ITEM_COMPASS], 24, 24,
                                       x + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow,
@@ -546,14 +596,14 @@ static Gfx* Panel_DrawTabs(Gfx* gfx, s32 canvasHeight) {
                                       STRIP_TAB_ICON + grow * 2);
             continue;
         }
-        if (sTabs[i].iconItem == ITEM_SONG_TIME) {
+        if (tab->iconItem == ITEM_SONG_TIME) {
             // The song note is a small IA glyph; draw it as a brown note instead of a full-colour icon
             gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, selected ? 255 : 170);
             gfx = Panel_DrawTex8b(gfx, gItemIconSongNoteTex, G_IM_FMT_IA, 16, 24, x + STRIP_TAB_SIZE / 2 - 13 - grow,
                                   tabY + STRIP_TAB_SIZE / 2 - 20 - grow, 26 + grow * 2, 39 + grow * 2);
             continue;
         }
-        gfx = Panel_DrawTexRGBA32(gfx, gItemIcons[sTabs[i].iconItem], 32, 32, x + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow,
+        gfx = Panel_DrawTexRGBA32(gfx, gItemIcons[tab->iconItem], 32, 32, x + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow,
                                   tabY + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow, STRIP_TAB_ICON + grow * 2,
                                   STRIP_TAB_ICON + grow * 2);
     }
@@ -631,7 +681,8 @@ static Gfx* Panel_DrawStrip(Gfx* gfx, s32 canvasHeight) {
 #define GRID_COLS 6
 #define GRID_ROWS 4
 #define GRID_SLOT 70
-#define GRID_X 16
+// Left-handed moves the controller to the left edge and the grid to the right
+#define GRID_X (sLeftHanded ? 204 : 16)
 #define GRID_Y ((STRIP_Y - GRID_ROWS * GRID_SLOT) / 2)
 #define GRID_ICON 64
 
@@ -651,19 +702,20 @@ typedef struct PanelEquipTarget {
 
 // The face buttons in the Thor's Nintendo layout: X (C-Left) on top, Y (C-Right) left, A right, B bottom,
 // RB (C-Down) on the shoulder, and the D-pad below
-#define FACE_X 540
+#define FACE_X (sLeftHanded ? 100 : 540)
 #define FACE_Y 150
 #define FACE_GAP 62
-#define DPAD_Y 368
+#define DPAD_Y 352
 
+// x is relative to FACE_X
 static PanelEquipTarget sEquipTargets[] = {
-    { EQUIP_TARGET_C_LEFT, FACE_X, FACE_Y - FACE_GAP, 70 },
-    { EQUIP_TARGET_C_RIGHT, FACE_X - FACE_GAP, FACE_Y, 70 },
-    { EQUIP_TARGET_C_DOWN, FACE_X + 70, FACE_Y - FACE_GAP - 44, 56 },
-    { EQUIP_TARGET_D_RIGHT, FACE_X + 60, DPAD_Y, 60 },
-    { EQUIP_TARGET_D_RIGHT + 1, FACE_X - 60, DPAD_Y, 60 }, // D-Left
-    { EQUIP_TARGET_D_RIGHT + 2, FACE_X, DPAD_Y + 60, 60 }, // D-Down
-    { EQUIP_TARGET_D_UP, FACE_X, DPAD_Y - 60, 60 },
+    { EQUIP_TARGET_C_LEFT, 0, FACE_Y - FACE_GAP, 70 },
+    { EQUIP_TARGET_C_RIGHT, -FACE_GAP, FACE_Y, 70 },
+    { EQUIP_TARGET_C_DOWN, 70, FACE_Y - FACE_GAP - 44, 56 },
+    { EQUIP_TARGET_D_RIGHT, 60, DPAD_Y, 60 },
+    { EQUIP_TARGET_D_RIGHT + 1, -60, DPAD_Y, 60 }, // D-Left
+    { EQUIP_TARGET_D_RIGHT + 2, 0, DPAD_Y + 60, 60 }, // D-Down
+    { EQUIP_TARGET_D_UP, 0, DPAD_Y - 60, 60 },
 };
 
 static void Panel_UpdateMapPage(PlayState* play);
@@ -673,6 +725,9 @@ static void Panel_UpdateNotebookDetails(PlayState* play);
 static Gfx* Panel_DrawNotebookDetails(Gfx* gfx, PlayState* play);
 static void Panel_SetNotebookHighlight(void);
 static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play);
+static void Panel_UpdateRandoPage(PlayState* play);
+static void Panel_UpdateTarget(PlayState* play);
+static s32 sRandoWasOpen; // the Checks page was open last update
 
 static s32 sSelectedSlot = -1; // inventory slot picked by a tap, waiting for a button
 static s32 sDragSlot = -1;     // inventory slot under the finger since it went down
@@ -726,7 +781,7 @@ static s32 Panel_TargetAt(f32 x, f32 y) {
         PanelEquipTarget* t = &sEquipTargets[i];
         s32 half = t->size / 2 + 6; // a little forgiving for fingers
 
-        if (Panel_TargetVisible(t->target) && Panel_InRect(x, y, t->x - half, t->y - half, half * 2, half * 2)) {
+        if (Panel_TargetVisible(t->target) && Panel_InRect(x, y, FACE_X + t->x - half, t->y - half, half * 2, half * 2)) {
             return t->target;
         }
     }
@@ -906,6 +961,7 @@ static Gfx* Panel_DrawEquipTargets(Gfx* gfx) {
 
     for (i = 0; i < ARRAY_COUNT(sEquipTargets); i++) {
         PanelEquipTarget* t = &sEquipTargets[i];
+        s32 tx = FACE_X + t->x;
         u8 item;
         s32 highlight;
 
@@ -926,21 +982,21 @@ static Gfx* Panel_DrawEquipTargets(Gfx* gfx) {
         } else {
             gfx = Panel_SetTexturedMode(gfx, 200, 200, 190, (highlight == 2) ? 255 : (highlight ? 200 : 130));
         }
-        gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, t->x - t->size / 2 - highlight * 2,
+        gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, tx - t->size / 2 - highlight * 2,
                               t->y - t->size / 2 - highlight * 2, t->size + highlight * 4, t->size + highlight * 4);
         if (item < ITEM_FD) {
             gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
             // Fill the button face; the face sits a touch up-left of the texture's centre because of its shadow
-            gfx = Panel_DrawItemIcon(gfx, item, t->x - 1, t->y - 1, t->size * 19 / 20);
+            gfx = Panel_DrawItemIcon(gfx, item, tx - 1, t->y - 1, t->size * 19 / 20);
         } else if (Panel_TargetLabel(t->target) != NULL) {
             gfx = Panel_SetTexturedMode(gfx, 255, 240, 0, 255);
-            gfx = Panel_DrawTex8b(gfx, Panel_TargetLabel(t->target), G_IM_FMT_IA, 32, 32, t->x - t->size / 2,
+            gfx = Panel_DrawTex8b(gfx, Panel_TargetLabel(t->target), G_IM_FMT_IA, 32, 32, tx - t->size / 2,
                                   t->y - t->size / 2, t->size, t->size);
         }
         // Small letter badge so a filled button still says which one it is
         if ((item < ITEM_FD) && (Panel_TargetLabel(t->target) != NULL)) {
             gfx = Panel_SetTexturedMode(gfx, 255, 240, 0, 255);
-            gfx = Panel_DrawTex8b(gfx, Panel_TargetLabel(t->target), G_IM_FMT_IA, 32, 32, t->x + t->size / 2 - 16,
+            gfx = Panel_DrawTex8b(gfx, Panel_TargetLabel(t->target), G_IM_FMT_IA, 32, 32, tx + t->size / 2 - 16,
                                   t->y - t->size / 2 - 6, 22, 22);
         }
     }
@@ -1861,8 +1917,10 @@ void DualScreen_Update(PlayState* play) {
     if (!DualScreen_IsActive()) {
         return;
     }
+    Panel_ReadSettings();
     Panel_PollTouch();
     Panel_UpdateTabs(canvasHeight);
+    Panel_UpdateTarget(play);
     // Touches on the strip belong to the tabs; pages only see touches that started above it
     if (sTouch.startY >= STRIP_Y) {
         sTouch.released = false;
@@ -1881,6 +1939,9 @@ void DualScreen_Update(PlayState* play) {
     } else if ((sPage == DUAL_SCREEN_PAGE_MAP) && (Panel_CurrentDungeon(play) < 0)) {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
         Panel_UpdateMapPage(play);
+    } else if (sPage == DUAL_SCREEN_PAGE_RANDO) {
+        sSelectedSlot = sDragSlot = sUseTarget = -1;
+        Panel_UpdateRandoPage(play);
     } else {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
     }
@@ -1890,6 +1951,9 @@ void DualScreen_Update(PlayState* play) {
                                    : 0);
     if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {
         Panel_UpdateNotebookDetails(play);
+    }
+    if (sPage != DUAL_SCREEN_PAGE_RANDO) {
+        sRandoWasOpen = false;
     }
 }
 
@@ -2691,6 +2755,284 @@ typedef enum PanelWarmup {
 
 static s32 sWarmupStep = WARMUP_ITEMS;
 
+// #region Checks: the randomizer's shuffled checks by area (rando saves only)
+
+#define RANDO_TOP 52
+#define RANDO_ROW_H 44
+#define RANDO_TEXT 0.9f
+#define RANDO_BACK_W 132
+
+static s32 sRandoArea = -1; // area being read, or -1 for the list of areas
+static f32 sRandoScroll = 0.0f;
+static f32 sRandoDragY = 0.0f;
+
+static s32 Panel_RandoRowCount(void) {
+    return (sRandoArea < 0) ? DualScreen_RandoAreaCount() : DualScreen_RandoCheckCount(sRandoArea);
+}
+
+static void Panel_RandoClampScroll(void) {
+    f32 maxScroll = Panel_RandoRowCount() * RANDO_ROW_H - (STRIP_Y - RANDO_TOP - 8);
+
+    sRandoScroll = CLAMP(sRandoScroll, 0.0f, MAX(maxScroll, 0.0f));
+}
+
+static void Panel_UpdateRandoPage(PlayState* play) {
+    s32 row;
+
+    DualScreen_RandoAreaCount(); // builds the lists after a file loads
+    // Opening the page starts in the area Link is in
+    if (!sRandoWasOpen) {
+        sRandoArea = DualScreen_RandoAreaForScene(play->sceneId);
+        sRandoScroll = 0.0f;
+    }
+    sRandoWasOpen = true;
+
+    if ((sRandoArea >= 0) && Panel_Tapped(8, 8, RANDO_BACK_W, 36)) {
+        sRandoArea = -1;
+        sRandoScroll = 0.0f;
+        Audio_PlaySfx(NA_SE_SY_DECIDE);
+        return;
+    }
+
+    // Drag to scroll
+    if (sTouch.began) {
+        sRandoDragY = sTouch.startY;
+    }
+    if (sTouch.down && sTouch.moved && (sTouch.startY >= RANDO_TOP)) {
+        sRandoScroll -= sTouch.y - sRandoDragY;
+    }
+    sRandoDragY = sTouch.y;
+    Panel_RandoClampScroll();
+
+    // Tap an area to read its checks
+    if ((sRandoArea < 0) && Panel_Tapped(0, RANDO_TOP, DUAL_SCREEN_CANVAS_WIDTH, STRIP_Y - RANDO_TOP)) {
+        row = (s32)((sTouch.startY - RANDO_TOP + sRandoScroll) / RANDO_ROW_H);
+        if (row < DualScreen_RandoAreaCount()) {
+            sRandoArea = row;
+            sRandoScroll = 0.0f;
+            Audio_PlaySfx(NA_SE_SY_DECIDE);
+        }
+    }
+}
+
+static Gfx* Panel_DrawRandoPage(Gfx* gfx, PlayState* play) {
+    char text[32];
+    s32 done;
+    s32 total;
+    s32 count = Panel_RandoRowCount();
+    s32 here = DualScreen_RandoAreaForScene(play->sceneId);
+    s32 first = (s32)(sRandoScroll / RANDO_ROW_H);
+    s32 i;
+
+    // Header: where we are, and the run's total
+    if (sRandoArea < 0) {
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+        gfx = Panel_DrawText(gfx, "All Areas", 20, 16, 1.0f);
+    } else {
+        gfx = Panel_FillRect(gfx, 8, 8, RANDO_BACK_W, 36, 120, 80, 30, Panel_Pressing(8, 8, RANDO_BACK_W, 36) ? 200 : 110);
+        gfx = Panel_SetSilhouetteMode(gfx, 255, 245, 210, 255);
+        gfx = Panel_DrawText(gfx, "< Areas", 22, 16, 1.0f);
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+        gfx = Panel_DrawTextN(gfx, DualScreen_RandoAreaName(sRandoArea), 24, RANDO_BACK_W + 20, 16, 1.0f);
+    }
+    DualScreen_RandoTotalProgress(&done, &total);
+    Panel_FormatFraction(text, done, total);
+    gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+    gfx = Panel_DrawTexRGBA32(gfx, gChestTrackerIcon, 32, 32, DUAL_SCREEN_CANVAS_WIDTH - 24 - Panel_TextWidth(text, 32, 1.0f) - 38,
+                              8, 34, 34);
+    gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
+    gfx = Panel_DrawText(gfx, text, DUAL_SCREEN_CANVAS_WIDTH - 20 - Panel_TextWidth(text, 32, 1.0f), 16, 1.0f);
+
+    if (count == 0) {
+        gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 200);
+        return Panel_DrawText(gfx, "No shuffled checks here.", 20, RANDO_TOP + 12, RANDO_TEXT);
+    }
+
+    gfx = Panel_SetScissor(gfx, 0, RANDO_TOP, DUAL_SCREEN_CANVAS_WIDTH, STRIP_Y - 4);
+    for (i = first; (i < count) && (i <= first + (STRIP_Y - RANDO_TOP) / RANDO_ROW_H + 1); i++) {
+        s32 y = RANDO_TOP + i * RANDO_ROW_H - (s32)sRandoScroll;
+
+        if (i % 2 == 0) {
+            gfx = Panel_FillRect(gfx, 8, y, DUAL_SCREEN_CANVAS_WIDTH - 16, RANDO_ROW_H, 120, 80, 30, 30);
+        }
+        if (sRandoArea < 0) {
+            // Area row: name and progress; finished areas in gold, Link's area marked
+            DualScreen_RandoAreaProgress(i, &done, &total);
+            if (i == here) {
+                gfx = Panel_FillRect(gfx, 8, y, 6, RANDO_ROW_H, 200, 40, 30, 220);
+            }
+            if (done == total) {
+                gfx = Panel_SetSilhouetteMode(gfx, 170, 120, 20, 255);
+            } else {
+                gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+            }
+            gfx = Panel_DrawTextN(gfx, DualScreen_RandoAreaName(i), 40, 24, y + 13, RANDO_TEXT);
+            Panel_FormatFraction(text, done, total);
+            gfx = Panel_DrawText(gfx, text, DUAL_SCREEN_CANVAS_WIDTH - 24 - Panel_TextWidth(text, 32, RANDO_TEXT),
+                                 y + 13, RANDO_TEXT);
+        } else {
+            // Check row: a stamp once collected, as the notebook marks events
+            s32 checked = DualScreen_RandoCheckDone(sRandoArea, i);
+
+            gfx = Panel_SetTexturedMode(gfx, checked ? 255 : 90, checked ? 190 : 60, checked ? 40 : 30,
+                                        checked ? 255 : 80);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, 18, y + 10, 24, 24);
+            if (checked) {
+                gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 140);
+            } else {
+                gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+            }
+            gfx = Panel_DrawTextN(gfx, DualScreen_RandoCheckName(sRandoArea, i), 56, 54, y + 13, RANDO_TEXT);
+        }
+    }
+    return Panel_SetScissor(gfx, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, DualScreen_GetCanvasHeight());
+}
+
+// #endregion
+
+// #region Target info: the Z-targeted enemy's name and health, over any page
+
+#define CVAR_TARGET_INFO "gEnhancements.DualScreen.TargetInfo"
+#define TARGET_W 280
+#define TARGET_X ((DUAL_SCREEN_CANVAS_WIDTH - TARGET_W) / 2)
+#define TARGET_FADE_FRAMES 20
+
+// Tatl's names for what she can tell Link about, by hint ID (TatlHintId)
+static const char* sTatlNames[] = {
+    NULL, "Snapper", "Mini Baba", "Mad Jelly", "Skulltula", "Red Chuchu", "Blue Chuchu", "Deku Baba",
+    "Bio Deku Baba", "Wilted Deku Baba", "Dexihand", "Nejiron", "Giant Bee", "Dodongo", "Deep Python",
+    "Death Armos", "Dinolfos", "Fire Keese", "Keese", "Armos", "Eeno", "Dragonfly", "Igos Du Ikana", "Garo",
+    "Garo Master", "Wart", "Gomess", "Goht", "Blue Bubble", "King's Lackeys", "King's Lackeys", "Skullwalltula",
+    "Gold Skulltula", "Captain Keeta", "Yellow Chuchu", "Takkuri", "Red Bubble", "Hiploop", "Masked Hiploop",
+    "Shellblade", "Gyorg", "Gyorg", "ReDead", NULL, "Black Boe", "Gibdo", "Twinmold", "Twinmold", "Wallmaster",
+    "Floormaster", "Majora's Mask", "Majora's Incarnation", "Majora's Wrath", "Iron Knuckle", NULL, "Like Like",
+    NULL, "Beamos", NULL, "Freezard", "White Boe", NULL, NULL, NULL, NULL, NULL, "Octorok", NULL, "Poe", "Gekko",
+    "Blue Tektite", "Leever", "Peahat", "Peahat Larva", "Eyegore", "Wizrobe", "Wolfos", "Mad Scrub", NULL, NULL,
+    "Meg", "Jo", "Beth", "Amy", "Pirate", "Stalchild", "Ice Keese", "White Wolfos", "Guay", "Big Octo", "Big Poe",
+    "Skullfish", "Desbreko", "Green Chuchu", "Odolwa", "Gekko", "Bad Bat", "Real Bombchu", "Odolwa", "Odolwa",
+    "Mushroom",
+};
+
+// A snapshot, never the actor itself: it may be gone by the time the card fades out
+static struct {
+    s32 fade;
+    const char* name;
+    s32 health;
+    s32 maxHealth;
+    s32 boss;
+} sTarget;
+
+static void Panel_UpdateTarget(PlayState* play) {
+    Attention* attention = &play->actorCtx.attention;
+    Actor* actor = (attention->reticleFadeAlphaControl != 0) ? attention->reticleActor : NULL;
+    const char* name = NULL;
+
+    if ((actor != NULL) && (actor->hintId < ARRAY_COUNT(sTatlNames))) {
+        name = sTatlNames[actor->hintId];
+    }
+    // Only enemies and the things Tatl knows about; talking to townsfolk doesn't need a card
+    if (!CVarGetInteger(CVAR_TARGET_INFO, 1) || (actor == NULL) ||
+        ((actor->category != ACTORCAT_ENEMY) && (actor->category != ACTORCAT_BOSS) && (name == NULL))) {
+        if (sTarget.fade > 0) {
+            sTarget.fade--;
+        }
+        return;
+    }
+    sTarget.fade = TARGET_FADE_FRAMES;
+    sTarget.name = (name != NULL) ? name : "Enemy";
+    sTarget.health = MAX((s8)actor->colChkInfo.health, 0);
+    sTarget.maxHealth = DualScreen_ActorMaxHealth(actor);
+    sTarget.boss = (actor->category == ACTORCAT_BOSS);
+}
+
+static Gfx* Panel_DrawTarget(Gfx* gfx) {
+    u8 alpha;
+    s32 fill;
+
+    if (sTarget.fade <= 0) {
+        return gfx;
+    }
+    alpha = (u8)(255 * sTarget.fade / TARGET_FADE_FRAMES);
+    gfx = Panel_FillRect(gfx, TARGET_X, 4, TARGET_W, 54, 0, 0, 0, alpha * 160 / 255);
+    if (sTarget.boss) {
+        gfx = Panel_FillRect(gfx, TARGET_X, 4, TARGET_W, 2, 255, 200, 60, alpha);
+        gfx = Panel_FillRect(gfx, TARGET_X, 56, TARGET_W, 2, 255, 200, 60, alpha);
+    }
+    // The name in the colour Tatl uses for enemies
+    gfx = Panel_SetSilhouetteMode(gfx, 255, 80, 60, alpha);
+    gfx = Panel_DrawText(gfx, sTarget.name, TARGET_X + (TARGET_W - Panel_TextWidth(sTarget.name, 64, 1.0f)) / 2, 9,
+                         1.0f);
+    // Health as the magic meter's frame filled in red, as 2S2H's enemy health bars do
+    if (sTarget.maxHealth > 0) {
+        fill = (TARGET_W - 32) * MIN(sTarget.health, sTarget.maxHealth) / sTarget.maxHealth;
+        gfx = Panel_FillRect(gfx, TARGET_X + 14, 34, TARGET_W - 28, 14, 255, 255, 255, alpha);
+        gfx = Panel_FillRect(gfx, TARGET_X + 16, 36, TARGET_W - 32, 10, 40, 0, 0, alpha);
+        if (fill > 0) {
+            gfx = Panel_FillRect(gfx, TARGET_X + 16, 36, fill, 10, 255, 0, 0, alpha);
+        }
+    }
+    return gfx;
+}
+
+// #endregion
+
+// #region FPS and input display (off by default), kept off the top screen
+
+#define CVAR_PERF_OVERLAY "gEnhancements.DualScreen.PerfOverlay"
+#define PERF_Y 446
+#define PERF_H 30
+
+typedef struct PerfButton {
+    u16 button;
+    const char* label; // the Thor's names, as on the Items page
+} PerfButton;
+
+static PerfButton sPerfButtons[] = {
+    { BTN_A, "A" },     { BTN_B, "B" },    { BTN_CLEFT, "X" }, { BTN_CRIGHT, "Y" }, { BTN_CDOWN, "RB" },
+    { BTN_CUP, "C^" },  { BTN_Z, "Z" },    { BTN_R, "R" },     { BTN_L, "L" },      { BTN_START, "St" },
+    { BTN_DUP, "^" },   { BTN_DDOWN, "v" }, { BTN_DLEFT, "<" }, { BTN_DRIGHT, ">" },
+};
+
+static Gfx* Panel_DrawPerfOverlay(Gfx* gfx, PlayState* play) {
+    Input* input = &play->state.input[0];
+    char text[16];
+    s32 x;
+    s32 i;
+
+    if (!CVarGetInteger(CVAR_PERF_OVERLAY, 0)) {
+        return gfx;
+    }
+    gfx = Panel_FillRect(gfx, 8, PERF_Y, DUAL_SCREEN_CANVAS_WIDTH - 16, PERF_H, 0, 0, 0, 170);
+
+    // Frames the top screen actually showed in the last second
+    Panel_FormatNumber(text, DualScreen_GetFPS());
+    strcat(text, " FPS");
+    gfx = Panel_SetSilhouetteMode(gfx, 120, 255, 120, 255);
+    gfx = Panel_DrawText(gfx, text, 18, PERF_Y + 7, 0.9f);
+
+    // Control stick: a dot in a box
+    gfx = Panel_FillRect(gfx, 130, PERF_Y + 3, 24, 24, 255, 255, 255, 60);
+    gfx = Panel_FillRect(gfx, 130 + 9 + input->cur.stick_x * 9 / 80, PERF_Y + 3 + 9 - input->cur.stick_y * 9 / 80, 6, 6,
+                         255, 255, 255, 255);
+
+    // Buttons light up while held
+    x = 172;
+    for (i = 0; i < ARRAY_COUNT(sPerfButtons); i++) {
+        s32 held = CHECK_BTN_ALL(input->cur.button, sPerfButtons[i].button);
+
+        if (held) {
+            gfx = Panel_SetSilhouetteMode(gfx, 255, 240, 0, 255);
+        } else {
+            gfx = Panel_SetSilhouetteMode(gfx, 150, 150, 150, 150);
+        }
+        gfx = Panel_DrawText(gfx, sPerfButtons[i].label, x, PERF_Y + 7, 0.9f);
+        x += Panel_TextWidth(sPerfButtons[i].label, 4, 0.9f) + 12;
+    }
+    return gfx;
+}
+
+// #endregion
+
 static Gfx* Panel_DrawWarmupPage(Gfx* gfx, PlayState* play, s32 canvasHeight) {
     s32 view = sQuestLogView;
 
@@ -2735,6 +3077,7 @@ void DualScreen_Draw(PlayState* play) {
         return;
     }
     sFramesSincePlayDraw = 0;
+    Panel_ReadSettings();
 
     gfx = Panel_Begin(&start, frameBufferId, canvasHeight);
     if (sWarmupStep < WARMUP_DONE) {
@@ -2754,9 +3097,13 @@ void DualScreen_Draw(PlayState* play) {
         Panel_SetNotebookHighlight();
         gfx = Panel_DrawNotebook(gfx, canvasHeight);
         gfx = Panel_DrawNotebookDetails(gfx, play);
+    } else if (sPage == DUAL_SCREEN_PAGE_RANDO) {
+        gfx = Panel_DrawRandoPage(gfx, play);
     } else {
         gfx = Panel_DrawQuestLog(gfx);
     }
+    gfx = Panel_DrawTarget(gfx);
+    gfx = Panel_DrawPerfOverlay(gfx, play);
     gfx = Panel_DrawStrip(gfx, canvasHeight);
     Panel_End(start, gfx, play->state.gfxCtx);
 }

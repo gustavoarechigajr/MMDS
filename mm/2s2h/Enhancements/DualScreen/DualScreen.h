@@ -18,6 +18,7 @@ typedef enum DualScreenPage {
     DUAL_SCREEN_PAGE_MAP,
     DUAL_SCREEN_PAGE_NOTEBOOK,
     DUAL_SCREEN_PAGE_STATUS,
+    DUAL_SCREEN_PAGE_RANDO,
     DUAL_SCREEN_PAGE_MAX
 } DualScreenPage;
 
@@ -51,6 +52,25 @@ void DualScreen_RequestSong(uint8_t song);
 void DualScreen_SkipPanelReplays(void);
 // Copies the panel framebuffer onto the secondary display; called after the frame is rendered
 void DualScreen_PresentFrame(void);
+
+// Counts one rendered top-screen frame; DualScreen_GetFPS reports the rate over the last second
+void DualScreen_CountFrame(void);
+int32_t DualScreen_GetFPS(void);
+
+struct Actor;
+// The health an actor started with (2S2H's enemy health data), for the target card
+uint8_t DualScreen_ActorMaxHealth(struct Actor* actor);
+
+// Randomizer checks grouped by area (DualScreenRando.cpp); all empty outside a rando save
+uint8_t DualScreen_RandoActive(void);
+int32_t DualScreen_RandoAreaCount(void);
+const char* DualScreen_RandoAreaName(int32_t area);
+void DualScreen_RandoAreaProgress(int32_t area, int32_t* done, int32_t* total);
+void DualScreen_RandoTotalProgress(int32_t* done, int32_t* total);
+int32_t DualScreen_RandoAreaForScene(int16_t sceneId);
+int32_t DualScreen_RandoCheckCount(int32_t area);
+const char* DualScreen_RandoCheckName(int32_t area, int32_t index);
+uint8_t DualScreen_RandoCheckDone(int32_t area, int32_t index);
 
 struct PlayState;
 struct GraphicsContext;

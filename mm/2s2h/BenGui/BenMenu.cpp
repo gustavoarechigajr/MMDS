@@ -1388,6 +1388,42 @@ void BenMenu::AddEnhancements() {
                      .DefaultValue(true)
                      .Tooltip("Tapping or holding an equipped button on the second screen presses that button, "
                               "as on Majora's Mask 3D's touch screen."));
+    AddWidget(path, "Second Screen Target Info", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.TargetInfo")
+        .Options(CheckboxOptions()
+                     .DefaultValue(true)
+                     .Tooltip("While you Z-target an enemy, the second screen shows its name and health."));
+    AddWidget(path, "Second Screen FPS and Input", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.PerfOverlay")
+        .Options(CheckboxOptions().Tooltip(
+            "Shows the frame rate and the buttons you're holding along the bottom of the second screen, "
+            "leaving the main screen clear."));
+    AddWidget(path, "Second Screen Left-Handed", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.LeftHanded")
+        .Options(CheckboxOptions().Tooltip(
+            "Puts the buttons on the left of the Items and Masks pages, the grid on the right, and the tabs in "
+            "reverse order."));
+    AddWidget(path, "Second Screen Tab: Items", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.Tab.Items")
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Items tab on the second screen."));
+    AddWidget(path, "Second Screen Tab: Masks", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.Tab.Masks")
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Masks tab on the second screen."));
+    AddWidget(path, "Second Screen Tab: Songs", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.Tab.Songs")
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Songs tab on the second screen."));
+    AddWidget(path, "Second Screen Tab: Map", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.Tab.Map")
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Map tab on the second screen."));
+    AddWidget(path, "Second Screen Tab: Quest Log", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.Tab.QuestLog")
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Quest Log tab on the second screen."));
+    AddWidget(path, "Second Screen Tab: Notebook", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.Tab.Notebook")
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Notebook tab on the second screen."));
+    AddWidget(path, "Second Screen Tab: Checks", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.Tab.Checks")
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Checks tab on the second screen. It only appears in randomizer saves."));
     AddWidget(path, "Bow Reticle", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.Graphics.BowReticle")
         .Options(CheckboxOptions().Tooltip("Gives the bow a reticle when you draw an arrow."));
