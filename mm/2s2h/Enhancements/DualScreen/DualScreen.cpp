@@ -21,6 +21,7 @@ void Message_ResetOcarinaButtonAlphas(void);
 }
 
 #include <atomic>
+#include <chrono>
 #include <deque>
 #include <cmath>
 #include <mutex>
@@ -148,7 +149,11 @@ static void PushTouch(int32_t type, float x, float y) {
 #include <jni.h>
 #include <android/native_window.h>
 #include <android/native_window_jni.h>
+#define EGL_EGLEXT_PROTOTYPES
 #include <EGL/egl.h>
+#include <EGL/eglext.h>
+#include <condition_variable>
+#include <thread>
 #include <GLES2/gl2.h>
 #include <android/log.h>
 
@@ -156,17 +161,28 @@ static void PushTouch(int32_t type, float x, float y) {
 
 namespace {
 
+// The copy to the second screen runs on its own thread with its own context (shared with the game's), so the
+// game thread only drops a fence and moves on: no context switches or waits on the second screen's vsync.
 struct PresentState {
+    // Guarded by mutex: the surface handed over by the UI thread
     std::mutex mutex;
     ANativeWindow* pendingWindow = nullptr;
     bool pendingDestroy = false;
+    ANativeWindow* window = nullptr;
+
+    // Owned by the game thread
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLContext context = EGL_NO_CONTEXT;
     EGLSurface surface = EGL_NO_SURFACE;
-    ANativeWindow* window = nullptr;
-    GLuint program = 0;
-    GLuint vbo = 0;
-    GLint textureUniform = -1;
+
+    // Hand-off to the present thread, guarded by frameMutex
+    std::thread thread;
+    std::mutex frameMutex;
+    std::condition_variable frameCv;
+    bool running = false;
+    bool hasFrame = false;
+    GLuint frameTexture = 0;
+    EGLSyncKHR frameSync = EGL_NO_SYNC_KHR;
 };
 
 PresentState sPresent;
@@ -193,21 +209,27 @@ GLuint CompileShader(GLenum type, const char* src) {
     return shader;
 }
 
-void EnsureGlResources() {
-    if (sPresent.program != 0) {
+void PresentThreadMain() {
+    EGLDisplay display = sPresent.display;
+    EGLSurface surface = sPresent.surface;
+
+    if (!eglMakeCurrent(display, surface, surface, sPresent.context)) {
+        DS_LOG("present thread: make current failed: egl 0x%x", eglGetError());
         return;
     }
+    // Off the game thread, so waiting for the second screen's vsync costs nothing and avoids tearing
+    eglSwapInterval(display, 1);
+
     GLuint vs = CompileShader(GL_VERTEX_SHADER, kVertexShader);
     GLuint fs = CompileShader(GL_FRAGMENT_SHADER, kFragmentShader);
-    sPresent.program = glCreateProgram();
-    glAttachShader(sPresent.program, vs);
-    glAttachShader(sPresent.program, fs);
-    glBindAttribLocation(sPresent.program, 0, "aPosition");
-    glBindAttribLocation(sPresent.program, 1, "aTexCoord");
-    glLinkProgram(sPresent.program);
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glBindAttribLocation(program, 0, "aPosition");
+    glBindAttribLocation(program, 1, "aTexCoord");
+    glLinkProgram(program);
     glDeleteShader(vs);
     glDeleteShader(fs);
-    sPresent.textureUniform = glGetUniformLocation(sPresent.program, "uTexture");
 
     // Fast3D framebuffer textures are stored top-down
     static const float kQuad[] = {
@@ -216,31 +238,86 @@ void EnsureGlResources() {
         -1.0f, 1.0f,  0.0f, 0.0f, //
         1.0f,  1.0f,  1.0f, 0.0f, //
     };
-    glGenBuffers(1, &sPresent.vbo);
-    glBindBuffer(GL_ARRAY_BUFFER, sPresent.vbo);
+    GLuint vbo;
+    glGenBuffers(1, &vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, vbo);
     glBufferData(GL_ARRAY_BUFFER, sizeof(kQuad), kQuad, GL_STATIC_DRAW);
+    glUseProgram(program);
+    glUniform1i(glGetUniformLocation(program, "uTexture"), 0);
+    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
+    glEnableVertexAttribArray(0);
+    glEnableVertexAttribArray(1);
+    glDisable(GL_BLEND);
+    glDisable(GL_DEPTH_TEST);
+    glDisable(GL_SCISSOR_TEST);
+    glActiveTexture(GL_TEXTURE0);
+
+    while (true) {
+        GLuint texture;
+        EGLSyncKHR sync;
+        {
+            std::unique_lock<std::mutex> lock(sPresent.frameMutex);
+            sPresent.frameCv.wait(lock, [] { return !sPresent.running || sPresent.hasFrame; });
+            if (!sPresent.running) {
+                break;
+            }
+            texture = sPresent.frameTexture;
+            sync = sPresent.frameSync;
+            sPresent.frameSync = EGL_NO_SYNC_KHR;
+            sPresent.hasFrame = false;
+        }
+        // Wait until the game's GPU work has finished drawing the panels
+        if (sync != EGL_NO_SYNC_KHR) {
+            eglClientWaitSyncKHR(display, sync, 0, 100000000ULL);
+            eglDestroySyncKHR(display, sync);
+        }
+
+        EGLint width = 0;
+        EGLint height = 0;
+        eglQuerySurface(display, surface, EGL_WIDTH, &width);
+        eglQuerySurface(display, surface, EGL_HEIGHT, &height);
+        glViewport(0, 0, width, height);
+        glBindTexture(GL_TEXTURE_2D, texture);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+        eglSwapBuffers(display, surface);
+    }
+
+    glDeleteBuffers(1, &vbo);
+    glDeleteProgram(program);
+    eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
+}
+
+// Serialises starting and stopping the present thread (the UI and game threads can both stop it)
+std::mutex sThreadMutex;
+
+// Safe from any thread; the UI thread calls it before the surface goes away
+void StopPresentThread() {
+    std::lock_guard<std::mutex> threadLock(sThreadMutex);
+    {
+        std::lock_guard<std::mutex> lock(sPresent.frameMutex);
+        if (!sPresent.running) {
+            return;
+        }
+        sPresent.running = false;
+    }
+    sPresent.frameCv.notify_one();
+    if (sPresent.thread.joinable()) {
+        sPresent.thread.join();
+    }
 }
 
 void DestroySurfaceLocked() {
-    if (sPresent.display != EGL_NO_DISPLAY) {
-        EGLDisplay prevDisplay = eglGetCurrentDisplay();
-        EGLContext prevContext = eglGetCurrentContext();
-        EGLSurface prevDraw = eglGetCurrentSurface(EGL_DRAW);
-        EGLSurface prevRead = eglGetCurrentSurface(EGL_READ);
-        if (sPresent.context != EGL_NO_CONTEXT && sPresent.surface != EGL_NO_SURFACE &&
-            eglMakeCurrent(sPresent.display, sPresent.surface, sPresent.surface, sPresent.context)) {
-            if (sPresent.program != 0) {
-                glDeleteProgram(sPresent.program);
-                glDeleteBuffers(1, &sPresent.vbo);
-            }
-            eglMakeCurrent(prevDisplay, prevDraw, prevRead, prevContext);
-        }
-        if (sPresent.surface != EGL_NO_SURFACE) {
-            eglDestroySurface(sPresent.display, sPresent.surface);
-        }
-        if (sPresent.context != EGL_NO_CONTEXT) {
-            eglDestroyContext(sPresent.display, sPresent.context);
-        }
+    StopPresentThread();
+    if (sPresent.frameSync != EGL_NO_SYNC_KHR) {
+        eglDestroySyncKHR(sPresent.display, sPresent.frameSync);
+        sPresent.frameSync = EGL_NO_SYNC_KHR;
+    }
+    if (sPresent.surface != EGL_NO_SURFACE) {
+        eglDestroySurface(sPresent.display, sPresent.surface);
+    }
+    if (sPresent.context != EGL_NO_CONTEXT) {
+        eglDestroyContext(sPresent.display, sPresent.context);
     }
     if (sPresent.window != nullptr) {
         ANativeWindow_release(sPresent.window);
@@ -249,8 +326,7 @@ void DestroySurfaceLocked() {
     sPresent.context = EGL_NO_CONTEXT;
     sPresent.surface = EGL_NO_SURFACE;
     sPresent.window = nullptr;
-    sPresent.program = 0;
-    sPresent.vbo = 0;
+    sPresent.hasFrame = false;
 }
 
 bool CreateSurfaceLocked(ANativeWindow* window) {
@@ -284,14 +360,9 @@ bool CreateSurfaceLocked(ANativeWindow* window) {
     sPresent.context = context;
     sPresent.surface = surface;
     sPresent.window = window;
-
-    // Never block the game thread on the second screen's vsync
-    EGLSurface prevDraw = eglGetCurrentSurface(EGL_DRAW);
-    EGLSurface prevRead = eglGetCurrentSurface(EGL_READ);
-    if (eglMakeCurrent(display, surface, surface, context)) {
-        eglSwapInterval(display, 0);
-        eglMakeCurrent(display, prevDraw, prevRead, mainContext);
-    }
+    std::lock_guard<std::mutex> threadLock(sThreadMutex);
+    sPresent.running = true;
+    sPresent.thread = std::thread(PresentThreadMain);
     return true;
 }
 
@@ -335,43 +406,19 @@ extern "C" void DualScreen_PresentFrame(void) {
     }
     GLuint texture = (GLuint)(uintptr_t)interpreter->GetCurrentRenderingAPI()->GetFramebufferTextureId(sFrameBufferId);
 
-    // Make the panel draw visible to the shared context before sampling it
+    // Fence after the panel draw, so the present thread samples a finished framebuffer
+    EGLSyncKHR sync = eglCreateSyncKHR(sPresent.display, EGL_SYNC_FENCE_KHR, nullptr);
     glFlush();
-
-    EGLDisplay prevDisplay = eglGetCurrentDisplay();
-    EGLSurface prevDraw = eglGetCurrentSurface(EGL_DRAW);
-    EGLSurface prevRead = eglGetCurrentSurface(EGL_READ);
-    EGLContext prevContext = eglGetCurrentContext();
-    if (!eglMakeCurrent(sPresent.display, sPresent.surface, sPresent.surface, sPresent.context)) {
-        return;
+    {
+        std::lock_guard<std::mutex> frameLock(sPresent.frameMutex);
+        if (sPresent.frameSync != EGL_NO_SYNC_KHR) {
+            eglDestroySyncKHR(sPresent.display, sPresent.frameSync);
+        }
+        sPresent.frameTexture = texture;
+        sPresent.frameSync = sync;
+        sPresent.hasFrame = true;
     }
-
-    EnsureGlResources();
-
-    EGLint width = 0;
-    EGLint height = 0;
-    eglQuerySurface(sPresent.display, sPresent.surface, EGL_WIDTH, &width);
-    eglQuerySurface(sPresent.display, sPresent.surface, EGL_HEIGHT, &height);
-
-    glDisable(GL_BLEND);
-    glDisable(GL_DEPTH_TEST);
-    glDisable(GL_SCISSOR_TEST);
-    glViewport(0, 0, width, height);
-    glUseProgram(sPresent.program);
-    glBindBuffer(GL_ARRAY_BUFFER, sPresent.vbo);
-    glEnableVertexAttribArray(0);
-    glEnableVertexAttribArray(1);
-    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)0);
-    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void*)(2 * sizeof(float)));
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, texture);
-    glUniform1i(sPresent.textureUniform, 0);
-    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
-    glDisableVertexAttribArray(0);
-    glDisableVertexAttribArray(1);
-
-    eglSwapBuffers(sPresent.display, sPresent.surface);
-    eglMakeCurrent(prevDisplay, prevDraw, prevRead, prevContext);
+    sPresent.frameCv.notify_one();
 }
 
 extern "C" JNIEXPORT void JNICALL Java_com_twoshipfork_mm_MainActivity_nativeDualScreenSurfaceChanged(
@@ -392,6 +439,8 @@ extern "C" JNIEXPORT void JNICALL Java_com_twoshipfork_mm_MainActivity_nativeDua
 
 extern "C" JNIEXPORT void JNICALL Java_com_twoshipfork_mm_MainActivity_nativeDualScreenSurfaceDestroyed(JNIEnv* env,
                                                                                                        jclass clazz) {
+    // The surface may not be drawn to once this returns
+    StopPresentThread();
     std::lock_guard<std::mutex> lock(sPresent.mutex);
     if (sPresent.pendingWindow != nullptr) {
         ANativeWindow_release(sPresent.pendingWindow);

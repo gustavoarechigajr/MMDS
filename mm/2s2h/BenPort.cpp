@@ -661,7 +661,9 @@ void OTRGlobals::Initialize() {
                                               CVarGetInteger("gSettings.AutoCaptureMouse", 1));
     context->GetWindow()->SetForceCursorVisibility(CVarGetInteger("gSettings.CursorVisibility", 0));
 
-    context->InitAudio({ .SampleRate = 32000, .SampleLength = 1024, .DesiredBuffered = 1680 });
+    // 2S2H [Dual Screen] ~75 ms of headroom instead of ~52 ms: at high interpolation rates one late frame
+    // could drain the queue and make the audio choppy
+    context->InitAudio({ .SampleRate = 32000, .SampleLength = 1024, .DesiredBuffered = 2400 });
 
     SPDLOG_INFO("Starting 2 Ship 2 Harkinian version {} (Branch: {} | Commit: {})", (char*)gBuildVersion,
                 (char*)gGitBranch, (char*)gGitCommitHash);

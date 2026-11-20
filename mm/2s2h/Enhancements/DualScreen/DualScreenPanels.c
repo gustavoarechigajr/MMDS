@@ -1225,6 +1225,15 @@ typedef struct QuestMaskInfo {
     const char* hint;
 } QuestMaskInfo;
 
+// Mask items in inventory slot order (SLOT_MASK_POSTMAN onwards); item IDs run in a different order
+static u8 sQuestMaskItems[] = {
+    ITEM_MASK_POSTMAN, ITEM_MASK_ALL_NIGHT, ITEM_MASK_BLAST,    ITEM_MASK_STONE,         ITEM_MASK_GREAT_FAIRY,
+    ITEM_MASK_DEKU,    ITEM_MASK_KEATON,    ITEM_MASK_BREMEN,   ITEM_MASK_BUNNY,         ITEM_MASK_DON_GERO,
+    ITEM_MASK_SCENTS,  ITEM_MASK_GORON,     ITEM_MASK_ROMANI,   ITEM_MASK_CIRCUS_LEADER, ITEM_MASK_KAFEIS_MASK,
+    ITEM_MASK_COUPLE,  ITEM_MASK_TRUTH,     ITEM_MASK_ZORA,     ITEM_MASK_KAMARO,        ITEM_MASK_GIBDO,
+    ITEM_MASK_GARO,    ITEM_MASK_CAPTAIN,   ITEM_MASK_GIANT,    ITEM_MASK_FIERCE_DEITY,
+};
+
 // In inventory order (SLOT_MASK_POSTMAN onwards)
 static QuestMaskInfo sQuestMasks[] = {
     { "Postman's Hat", "Hand the Postman the Express Mail to Mama on the Final Day. He flees town and leaves his hat." },
@@ -1585,7 +1594,7 @@ static Gfx* Panel_DrawLogMasks(Gfx* gfx) {
         } else {
             gfx = Panel_SetSilhouetteMode(gfx, 60, 40, 20, 110);
         }
-        gfx = Panel_DrawItemIcon(gfx, ITEM_MASK_POSTMAN + i, x + LOG_MASK_SLOT / 2, y + LOG_MASK_SLOT / 2, 48);
+        gfx = Panel_DrawItemIcon(gfx, sQuestMaskItems[i], x + LOG_MASK_SLOT / 2, y + LOG_MASK_SLOT / 2, 48);
     }
 
     // Name and status of the picked mask beside the grid
