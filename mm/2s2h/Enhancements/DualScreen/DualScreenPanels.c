@@ -109,6 +109,15 @@ static Gfx* Panel_SetTexturedMode(Gfx* gfx, u8 r, u8 g, u8 b, u8 a) {
     return gfx;
 }
 
+// Solid colour shaped by the texture's alpha: for glyphs whose HD replacement is dark (the song note)
+static Gfx* Panel_SetSilhouetteMode(Gfx* gfx, u8 r, u8 g, u8 b, u8 a) {
+    gDPPipeSync(gfx++);
+    gDPSetCombineLERP(gfx++, 0, 0, 0, PRIMITIVE, TEXEL0, 0, PRIMITIVE, 0, 0, 0, 0, PRIMITIVE, TEXEL0, 0, PRIMITIVE, 0);
+    gDPSetRenderMode(gfx++, G_RM_XLU_SURF, G_RM_XLU_SURF2);
+    gDPSetPrimColor(gfx++, 0, 0, r, g, b, a);
+    return gfx;
+}
+
 static Gfx* Panel_FillRect(Gfx* gfx, s32 x, s32 y, s32 w, s32 h, u8 r, u8 g, u8 b, u8 a) {
     gDPPipeSync(gfx++);
     gDPSetCombineMode(gfx++, G_CC_PRIMITIVE, G_CC_PRIMITIVE);
@@ -917,8 +926,8 @@ static Gfx* Panel_DrawEquipPage(Gfx* gfx, PlayState* play, s32 firstSlot) {
 #define SONG_TOP 100
 #define SONG_ROW_H 62
 #define SONG_COL_W 304
-#define SONG_NOTE 30
-#define SONG_NOTE_ADVANCE 32
+#define SONG_NOTE 35
+#define SONG_NOTE_ADVANCE 37
 
 typedef struct PanelSong {
     u8 song; // OCARINA_SONG_*
@@ -929,12 +938,12 @@ typedef struct PanelSong {
 
 // Two columns: the songs of time and travel, then the songs that wake each region
 static PanelSong sPanelSongs[] = {
-    { OCARINA_SONG_TIME, 255, 255, 255 },          { OCARINA_SONG_STORMS, 255, 255, 255 },
-    { OCARINA_SONG_INVERTED_TIME, 255, 255, 255 }, { OCARINA_SONG_SONATA, 150, 255, 100 },
-    { OCARINA_SONG_DOUBLE_TIME, 255, 255, 255 },   { OCARINA_SONG_GORON_LULLABY, 255, 80, 40 },
-    { OCARINA_SONG_HEALING, 255, 255, 255 },       { OCARINA_SONG_NEW_WAVE, 100, 150, 255 },
-    { OCARINA_SONG_SOARING, 255, 255, 255 },       { OCARINA_SONG_ELEGY, 255, 160, 0 },
-    { OCARINA_SONG_EPONAS, 255, 255, 255 },        { OCARINA_SONG_OATH, 255, 100, 255 },
+    { OCARINA_SONG_TIME, 110, 70, 35 },          { OCARINA_SONG_STORMS, 110, 70, 35 },
+    { OCARINA_SONG_INVERTED_TIME, 110, 70, 35 }, { OCARINA_SONG_SONATA, 150, 255, 100 },
+    { OCARINA_SONG_DOUBLE_TIME, 110, 70, 35 },   { OCARINA_SONG_GORON_LULLABY, 255, 80, 40 },
+    { OCARINA_SONG_HEALING, 110, 70, 35 },       { OCARINA_SONG_NEW_WAVE, 100, 150, 255 },
+    { OCARINA_SONG_SOARING, 110, 70, 35 },       { OCARINA_SONG_ELEGY, 255, 160, 0 },
+    { OCARINA_SONG_EPONAS, 110, 70, 35 },        { OCARINA_SONG_OATH, 255, 100, 255 },
 };
 
 // Which song (if any) can be played for this row: Inverted and Double Time come with the Song of Time, and
@@ -1075,14 +1084,14 @@ static Gfx* Panel_DrawQuestPage(Gfx* gfx) {
         if (Panel_Pressing(rowX, rowY, SONG_COL_W - 8, SONG_ROW_H) && (song >= 0)) {
             gfx = Panel_FillRect(gfx, rowX, rowY + 4, SONG_COL_W - 8, SONG_ROW_H - 8, 255, 200, 60, 90);
         }
-        gfx = Panel_SetTexturedMode(gfx, entry->r, entry->g, entry->b, (song >= 0) ? 255 : 50);
+        gfx = Panel_SetSilhouetteMode(gfx, entry->r, entry->g, entry->b, (song >= 0) ? 255 : 50);
         gfx = Panel_DrawTex8b(gfx, gItemIconSongNoteTex, G_IM_FMT_IA, 16, 24, rowX + 4, rowY + 12, 26, 39);
         if (song < 0) {
             continue;
         }
         for (n = 0; n < gOcarinaSongButtons[song].numButtons; n++) {
             gfx = Panel_DrawSongNote(gfx, gOcarinaSongButtons[song].buttonIndex[n],
-                                     rowX + 40 + n * SONG_NOTE_ADVANCE, rowY + (SONG_ROW_H - SONG_NOTE) / 2, 255);
+                                     rowX + 36 + n * SONG_NOTE_ADVANCE, rowY + (SONG_ROW_H - SONG_NOTE) / 2, 255);
         }
     }
     return gfx;
