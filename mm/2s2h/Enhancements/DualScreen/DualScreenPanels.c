@@ -602,6 +602,19 @@ void DualScreen_Draw(PlayState* play) {
     Panel_End(start, gfx, play->state.gfxCtx);
 }
 
+// Big RGBA32 images (the title logo) don't fit a normal texture load; load the whole image as one clamped tile,
+// as 2S2H's own title screen does for HD textures
+static Gfx* Panel_DrawLargeRGBA32(Gfx* gfx, TexturePtr tex, s32 texW, s32 texH, s32 x, s32 y, s32 w, s32 h) {
+    gDPSetTileCustom(gfx++, G_IM_FMT_RGBA, G_IM_SIZ_32b, texW, texH, 0, G_TX_NOMIRROR | G_TX_CLAMP,
+                     G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    gDPSetTextureImage(gfx++, G_IM_FMT_RGBA, G_IM_SIZ_32b, texW, tex);
+    gDPLoadSync(gfx++);
+    gDPLoadTile(gfx++, G_TX_LOADTILE, 0, 0, (texW - 1) << 2, (texH - 1) << 2);
+    gSPTextureRectangle(gfx++, x << 2, y << 2, (x + w) << 2, (y + h) << 2, G_TX_RENDERTILE, 0, 0, TEX_SCALE(texW, w),
+                        TEX_SCALE(texH, h));
+    return gfx;
+}
+
 void DualScreen_DrawIdle(GraphicsContext* gfxCtx) {
     Gfx* start;
     Gfx* gfx;
@@ -621,7 +634,7 @@ void DualScreen_DrawIdle(GraphicsContext* gfxCtx) {
     // The title screen's logo on the notebook's parchment
     gfx = Panel_Begin(&start, frameBufferId, canvasHeight);
     gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
-    gfx = Panel_DrawTexRGBA32(gfx, gTitleScreenZeldaLogoTex, 144, 64, 320 - 216, canvasHeight / 2 - 120, 432, 192);
+    gfx = Panel_DrawLargeRGBA32(gfx, gTitleScreenZeldaLogoTex, 144, 64, 320 - 216, canvasHeight / 2 - 120, 432, 192);
     gfx = Panel_SetTexturedMode(gfx, 120, 60, 20, 255);
     gfx = Panel_DrawTex8b(gfx, gTitleScreenMajorasMaskSubtitleTex, G_IM_FMT_I, 104, 16, 320 - 156,
                           canvasHeight / 2 + 84, 312, 48);
