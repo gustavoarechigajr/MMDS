@@ -62,8 +62,27 @@ static bool OpenAndroidAccelSensor() {
 static ASensorEventQueue* sGyroQueue = nullptr;
 static const ASensor* sQueueGyro = nullptr;
 static const ASensor* sQueueAccel = nullptr;
+// The sensor hub's fused orientation (gyro + accelerometer, no compass). Turning is read from its heading, frame to
+// frame, rather than by adding up gyro steps: added-up steps keep every small error (hard shaking left the aim tens
+// of degrees off), while a heading comes back to the same value whenever the device does.
+static const ASensor* sQueueRotation = nullptr;
+static bool sHasHeading = false;
+static float sHeading = 0.0f;     // latest heading of the device's Y axis around the vertical, radians
+static float sLastHeading = 0.0f; // heading at the previous poll
+static bool sHeadingValid = false;
+static bool sLastHeadingValid = false;
+// Tilt around the device's Y axis (up/down aim in landscape), from the same fused orientation
+static float sTilt = 0.0f;
+static float sLastTilt = 0.0f;
+static bool sTiltValid = false;
+static bool sLastTiltValid = false;
 static float sLastGyro[3] = { 0.0f, 0.0f, 0.0f };
 static int32_t sGyroEventCount = 0; // for the diagnostics log
+// Diagnostics: exact running totals (degrees) per event: raw axes, turn around "up", and the relaxed turn
+static double sRawTotal[3] = { 0.0, 0.0, 0.0 };
+static double sWorldYawTotal = 0.0;
+static double sRelaxedTotal = 0.0;
+static float sPeakRate = 0.0f;
 static int64_t sLastGyroTimestamp = 0;
 
 static bool OpenAndroidGyroQueue() {
@@ -80,6 +99,7 @@ static bool OpenAndroidGyroQueue() {
     }
     sQueueGyro = ASensorManager_getDefaultSensor(manager, ASENSOR_TYPE_GYROSCOPE);
     sQueueAccel = ASensorManager_getDefaultSensor(manager, ASENSOR_TYPE_ACCELEROMETER);
+    sQueueRotation = ASensorManager_getDefaultSensor(manager, 15); // ASENSOR_TYPE_GAME_ROTATION_VECTOR
     ALooper* looper = ALooper_forThread();
     if (looper == nullptr) {
         looper = ALooper_prepare(ALOOPER_PREPARE_ALLOW_NON_CALLBACKS);
@@ -101,6 +121,9 @@ static bool OpenAndroidGyroQueue() {
         registerSensor(sGyroQueue, sQueueGyro, 5000, 0); // 200 Hz, no batching
         if (sQueueAccel != nullptr) {
             registerSensor(sGyroQueue, sQueueAccel, 10000, 0);
+        }
+        if (sQueueRotation != nullptr) {
+            registerSensor(sGyroQueue, sQueueRotation, 5000, 0);
         }
     } else {
         ASensorEventQueue_enableSensor(sGyroQueue, sQueueGyro);
@@ -137,10 +160,64 @@ static bool ReadAndroidGyroQueue(float mean[3], float latest[3]) {
                     sLastGyro[k] = e.data[k];
                 }
                 sumDt += dt;
-                sGyroEventCount++;
-            } else if (e.type == ASENSOR_TYPE_ACCELEROMETER) {
+                // Keep "up" turning with the device: a fixed world direction seen from the device changes by
+                // -(rate x up) as it rotates
+                float cross[3] = { e.data[1] * sAndroidUp[2] - e.data[2] * sAndroidUp[1],
+                                   e.data[2] * sAndroidUp[0] - e.data[0] * sAndroidUp[2],
+                                   e.data[0] * sAndroidUp[1] - e.data[1] * sAndroidUp[0] };
                 for (int32_t k = 0; k < 3; k++) {
-                    sAndroidUp[k] += (e.data[k] - sAndroidUp[k]) * 0.05f;
+                    sAndroidUp[k] -= cross[k] * dt;
+                }
+                sGyroEventCount++;
+                {
+                    float upLen = sqrtf(sAndroidUp[0] * sAndroidUp[0] + sAndroidUp[1] * sAndroidUp[1] +
+                                        sAndroidUp[2] * sAndroidUp[2]);
+                    float w = (upLen > 1.0f) ? (e.data[0] * sAndroidUp[0] + e.data[1] * sAndroidUp[1] +
+                                                e.data[2] * sAndroidUp[2]) / upLen
+                                             : 0.0f;
+                    float plane = sqrtf(e.data[0] * e.data[0] + e.data[2] * e.data[2]);
+                    float relaxed = fminf(fabsf(w) * 1.75f, plane) * ((w < 0.0f) ? -1.0f : 1.0f);
+                    for (int32_t k = 0; k < 3; k++) {
+                        sRawTotal[k] += e.data[k] * dt * 57.2958;
+                        sPeakRate = fmaxf(sPeakRate, fabsf(e.data[k]));
+                    }
+                    sWorldYawTotal += w * dt * 57.2958;
+                    sRelaxedTotal += relaxed * dt * 57.2958;
+                }
+            } else if (e.type == 15) { // game rotation vector: x, y, z (and w) of the device-to-world quaternion
+                float qx = e.data[0];
+                float qy = e.data[1];
+                float qz = e.data[2];
+                float qw = e.data[3];
+                if (qw == 0.0f) {
+                    qw = sqrtf(fmaxf(0.0f, 1.0f - qx * qx - qy * qy - qz * qz));
+                }
+                // The device's Y axis in world space; it stays near level however the device is held in landscape
+                float vx = 2.0f * (qx * qy - qw * qz);
+                float vy = 1.0f - 2.0f * (qx * qx + qz * qz);
+                float vz = 2.0f * (qy * qz + qw * qx);
+                sHeadingValid = fabsf(vz) < 0.9f;
+                // World up seen from the device; its angle in the device's X-Z plane is the tilt around Y
+                float ux = 2.0f * (qx * qz - qw * qy);
+                float uz = 1.0f - 2.0f * (qx * qx + qy * qy);
+                sTiltValid = (ux * ux + uz * uz) > 0.1f;
+                if (sTiltValid) {
+                    sTilt = atan2f(ux, uz);
+                }
+                if (sHeadingValid) {
+                    sHeading = atan2f(vy, vx);
+                    sHasHeading = true;
+                }
+            } else if (e.type == ASENSOR_TYPE_ACCELEROMETER) {
+                // The accelerometer only nudges "up" back toward gravity, slowly (about 2 s), and not at all while
+                // the device is being jolted: shaking tilts its reading in step with the rotation, and those errors
+                // would add up to a turn in one direction instead of cancelling out
+                float g = sqrtf(e.data[0] * e.data[0] + e.data[1] * e.data[1] + e.data[2] * e.data[2]);
+                float upLength = sqrtf(sAndroidUp[0] * sAndroidUp[0] + sAndroidUp[1] * sAndroidUp[1] +
+                                       sAndroidUp[2] * sAndroidUp[2]);
+                float blend = (upLength < 1.0f) ? 1.0f : ((g > 8.3f && g < 11.3f) ? 0.005f : 0.0f);
+                for (int32_t k = 0; k < 3; k++) {
+                    sAndroidUp[k] += (e.data[k] - sAndroidUp[k]) * blend;
                 }
             }
         }
@@ -243,8 +320,9 @@ void SDLGyroMapping::UpdatePad(float& x, float& y) {
     }
     if (Ship::Context::GetRawInstance()->GetConsoleVariables()->GetInteger("gDebug.GyroLog", 0) &&
         (++sLogCounter % 4) == 0) {
-        __android_log_print(ANDROID_LOG_INFO, "DSGyro", "pitch %+.3f yaw %+.3f roll %+.3f totalYaw %+.1f deg events %d",
-                            gyroData[0], gyroData[1], gyroData[2], sTotalYawDeg, sGyroEventCount);
+        __android_log_print(ANDROID_LOG_INFO, "DSGyro", "pitch %+.3f yaw %+.3f roll %+.3f totalYaw %+.1f deg events %d | raw %+.1f %+.1f %+.1f world %+.1f relaxed %+.1f peak %.1f",
+                            gyroData[0], gyroData[1], gyroData[2], sTotalYawDeg, sGyroEventCount, sRawTotal[0],
+                            sRawTotal[1], sRawTotal[2], sWorldYawTotal, sRelaxedTotal, sPeakRate);
     }
     x = (gyroData[0] - mNeutralPitch) * mSensitivity;
     y = (gyroData[1] - mNeutralYaw) * mSensitivity;
@@ -340,17 +418,23 @@ void SDLGyroMapping::GetAndroidGyroData(SDL_GameController* gamepad, float gyroD
         if (length > 4.0f) { // roughly 1 g: a real reading, not a sensor that hasn't started yet
             float worldYaw =
                 (gyroData[0] * sAndroidUp[0] + gyroData[1] * sAndroidUp[1] + gyroData[2] * sAndroidUp[2]) / length;
-            // "Relaxed" player space (JoyShockMapper's): wrists don't turn around a perfect vertical, so measured
-            // around it a turn counts less or more depending on how the hand twists. Take the size from all the
-            // rotation except pitch (capped at 1.75x the vertical part, so a pure twist of the screen still doesn't
-            // turn) and the direction from the vertical. In landscape, pitch is the device's Y axis.
-            SDL_DisplayOrientation orientation = SDL_GetDisplayOrientation(0);
-            bool landscape =
-                (orientation == SDL_ORIENTATION_LANDSCAPE) || (orientation == SDL_ORIENTATION_LANDSCAPE_FLIPPED);
-            float a = landscape ? gyroData[0] : gyroData[1];
-            float planeRate = sqrtf(a * a + gyroData[2] * gyroData[2]);
-            float size = fminf(fabsf(worldYaw) * 1.75f, planeRate);
-            playerYaw = (worldYaw < 0.0f) ? -size : size;
+            // Player space: the turn around the real vertical. ("Relaxed" player space, which takes the size from
+            // the device's own axes, was tried: under hard shaking the gyro clips at ~3.4 rad/s and that variant
+            // turned the clipping into a one-way turn of 40-60 degrees, against ~5 for this one.)
+            playerYaw = worldYaw;
+            // Prefer the change in fused heading since the last poll. The game adds this value once per game frame
+            // (20 a second), so pass the change as a per-frame amount, not divided by the real time between polls.
+            if (sHasHeading && sHeadingValid && sLastHeadingValid) {
+                float delta = sHeading - sLastHeading;
+                if (delta > (float)M_PI) {
+                    delta -= 2.0f * (float)M_PI;
+                } else if (delta < -(float)M_PI) {
+                    delta += 2.0f * (float)M_PI;
+                }
+                playerYaw = delta * 20.0f;
+            }
+            sLastHeading = sHeading;
+            sLastHeadingValid = sHasHeading && sHeadingValid;
             hasPlayerYaw = true;
         }
     }
@@ -377,6 +461,24 @@ void SDLGyroMapping::GetAndroidGyroData(SDL_GameController* gamepad, float gyroD
     }
     if (hasPlayerYaw) {
         gyroData[1] = playerYaw;
+    }
+    // Up/down aim from the change in fused tilt, per game frame like the turn above. Rotating by w around Y moves
+    // the tilt by -w, matching the landscape mapping's -gyroY (and +gyroY when flipped).
+    {
+        SDL_DisplayOrientation orientation = SDL_GetDisplayOrientation(0);
+        bool landscape =
+            (orientation == SDL_ORIENTATION_LANDSCAPE) || (orientation == SDL_ORIENTATION_LANDSCAPE_FLIPPED);
+        if (fromQueue && landscape && sTiltValid && sLastTiltValid) {
+            float delta = sTilt - sLastTilt;
+            if (delta > (float)M_PI) {
+                delta -= 2.0f * (float)M_PI;
+            } else if (delta < -(float)M_PI) {
+                delta += 2.0f * (float)M_PI;
+            }
+            gyroData[0] = ((orientation == SDL_ORIENTATION_LANDSCAPE) ? delta : -delta) * 20.0f;
+        }
+        sLastTilt = sTilt;
+        sLastTiltValid = sTiltValid;
     }
 }
 #endif
