@@ -40,6 +40,8 @@ void KaleidoScope_ApplyMaskEquip(PlayState* play);
 extern u8 gPlayerFormSlotRestrictions[PLAYER_FORM_MAX][ITEM_NUM_SLOTS];
 extern u8 sPlayerFormItems[PLAYER_FORM_MAX];
 extern u16 sMasksGivenOnMoonBits[];
+// The pause menu's floor button labels (z_map_disp.c)
+TexturePtr MapDisp_GetDungeonMapFloorTexture(s32 floorNumber);
 // The message box font (z_kanfont.c, z_message_nes.c)
 extern const char* fontTbl[];
 extern f32 sNESFontWidths[];
@@ -749,6 +751,7 @@ static Gfx* Panel_DrawNotebookDetails(Gfx* gfx, PlayState* play);
 static void Panel_SetNotebookHighlight(void);
 static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play);
 static void Panel_UpdateRandoPage(PlayState* play);
+static void Panel_UpdateDungeonMap(PlayState* play, s32 dungeon);
 static void Panel_UpdateTarget(PlayState* play);
 static s32 sRandoWasOpen; // the Checks page was open last update
 
@@ -1959,6 +1962,9 @@ void DualScreen_Update(PlayState* play) {
     } else if (sPage == DUAL_SCREEN_PAGE_STATUS) {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
         Panel_UpdateQuestLog(play);
+    } else if ((sPage == DUAL_SCREEN_PAGE_MAP) && (Panel_CurrentDungeon(play) >= 0)) {
+        sSelectedSlot = sDragSlot = sUseTarget = -1;
+        Panel_UpdateDungeonMap(play, Panel_CurrentDungeon(play));
     } else if ((sPage == DUAL_SCREEN_PAGE_MAP) && (Panel_CurrentDungeon(play) < 0)) {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
         Panel_UpdateMapPage(play);
@@ -2694,11 +2700,7 @@ static TexturePtr sDungeonFairyTex[] = {
 // Which of the four temples Link is in (dungeon or boss room), or -1
 static s32 Panel_CurrentDungeon(PlayState* play) {
     s32 index = Map_GetDungeonSceneIndex(play);
-    s32 preview = CVarGetInteger("gEnhancements.DualScreen.PreviewDungeon", 0); // testing: 1-4 forces a temple
 
-    if (preview > 0) {
-        return CLAMP(preview, 1, 4) - 1;
-    }
     if (index < 0) {
         return -1;
     }
@@ -2709,54 +2711,156 @@ static s32 Panel_CurrentDungeon(PlayState* play) {
     return (index > 4) ? index - 5 : index;
 }
 
-static Gfx* Panel_DrawDungeonItem(Gfx* gfx, s32 have, TexturePtr tex, s32 texW, s32 x, s32 y, const char* label) {
-    gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, have ? 70 : 35);
-    gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, x, y, 84, 84);
-    gfx = Panel_SetTexturedMode(gfx, have ? 255 : 120, have ? 255 : 120, have ? 255 : 120, have ? 255 : 110);
-    gfx = Panel_DrawTexRGBA32(gfx, tex, texW, texW, x + 12, y + 12, 60, 60);
-    gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, have ? 255 : 120);
-    return Panel_DrawText(gfx, label, x + 42 - Panel_TextWidth(label, 32, LOG_SMALL) / 2, y + 90, LOG_SMALL);
+// The dungeon page: the pause menu's floor map, with floor buttons on the left and the temple's items on the right
+#define DMAP_X 112
+#define DMAP_Y 56
+#define DMAP_W 384
+#define DMAP_H 416
+#define DFLOOR_X 16
+#define DFLOOR_W 64
+#define DFLOOR_H 48
+#define DFLOOR_GAP 8
+#define DITEM_X 512
+
+static s32 sDungeonStorey = -1;       // floor picked on the page, or -1 to follow Link
+static s32 sDungeonFollowStorey = -1; // Link's floor when it was picked
+
+static s32 Panel_DungeonFloorY(MapDispPanelInfo* info, s32 storey) {
+    // Top floor first, centred down the column
+    s32 total = info->numStoreys * (DFLOOR_H + DFLOOR_GAP) - DFLOOR_GAP;
+
+    return DMAP_Y + (DMAP_H - total) / 2 + (info->numStoreys - 1 - storey) * (DFLOOR_H + DFLOOR_GAP);
 }
 
-static Gfx* Panel_DrawDungeonCard(Gfx* gfx, s32 dungeon) {
+static s32 Panel_DungeonShownStorey(MapDispPanelInfo* info) {
+    // Back to following Link once he changes floor
+    if ((sDungeonStorey >= 0) && (info->playerStorey != sDungeonFollowStorey)) {
+        sDungeonStorey = -1;
+    }
+    return (sDungeonStorey >= 0) ? sDungeonStorey : MAX(info->playerStorey, 0);
+}
+
+static void Panel_UpdateDungeonMap(PlayState* play, s32 dungeon) {
+    MapDispPanelInfo info;
+    s32 storey;
+
+    MapDisp_GetPanelInfo(play, 0, dungeon, &info);
+    Panel_DungeonShownStorey(&info);
+    for (storey = 0; storey < info.numStoreys; storey++) {
+        if (info.storeyVisited[storey] &&
+            Panel_Tapped(DFLOOR_X, Panel_DungeonFloorY(&info, storey), DFLOOR_W, DFLOOR_H)) {
+            sDungeonStorey = (storey == info.playerStorey) ? -1 : storey;
+            sDungeonFollowStorey = info.playerStorey;
+            Audio_PlaySfx(NA_SE_SY_CURSOR);
+        }
+    }
+}
+
+static Gfx* Panel_DrawDungeonItem(Gfx* gfx, s32 have, TexturePtr tex, s32 y, const char* label) {
+    gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, have ? 70 : 35);
+    gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, DITEM_X, y, 56, 56);
+    gfx = Panel_SetTexturedMode(gfx, have ? 255 : 120, have ? 255 : 120, have ? 255 : 120, have ? 255 : 110);
+    gfx = Panel_DrawTexRGBA32(gfx, tex, 24, 24, DITEM_X + 8, y + 8, 40, 40);
+    gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, have ? 255 : 120);
+    return Panel_DrawText(gfx, label, DITEM_X + 62, y + 20, LOG_SMALL);
+}
+
+static Gfx* Panel_DrawDungeonMapPage(Gfx* gfx, PlayState* play, s32 dungeon) {
+    MapDispPanelInfo info;
     char count[16];
-    s32 keys = DUNGEON_KEY_COUNT(dungeon);
+    s32 keys = CLAMP_MIN(DUNGEON_KEY_COUNT(dungeon), 0);
     s32 fairies = CLAMP(gSaveContext.save.saveInfo.inventory.strayFairies[dungeon], 0, 15);
-    s32 x = 40;
+    s32 storey;
+    s32 y;
+
+    MapDisp_GetPanelInfo(play, 0, dungeon, &info);
+    storey = Panel_DungeonShownStorey(&info);
+    MapDisp_GetPanelInfo(play, storey, dungeon, &info);
 
     // The pause menu's title for this temple
     gfx = Panel_SetTexturedMode(gfx, 120, 60, 20, 255);
-    gfx = Panel_DrawTex8b(gfx, sDungeonTitleTex[dungeon], G_IM_FMT_IA, 128, 16, 320 - 256, 30, 512, 64);
-    gfx = Panel_FillRect(gfx, 20, 110, DUAL_SCREEN_CANVAS_WIDTH - 40, 2, 90, 50, 20, 120);
+    gfx = Panel_DrawTex8b(gfx, sDungeonTitleTex[dungeon], G_IM_FMT_IA, 128, 16, 320 - 160, 8, 320, 40);
 
-    gfx = Panel_DrawDungeonItem(gfx, CHECK_DUNGEON_ITEM(DUNGEON_MAP, dungeon), gQuestIconDungeonMapTex, 24, x, 140,
+    // The map on a dark board, as in the pause menu
+    gfx = Panel_FillRect(gfx, DMAP_X, DMAP_Y, DMAP_W, DMAP_H, 20, 25, 45, 220);
+    if (info.numStoreys > 0) {
+        f32 w = info.maxX - info.minX;
+        f32 h = info.maxY - info.minY;
+        f32 zoom = CLAMP(MIN((DMAP_W - 24) / w, (DMAP_H - 24) / h), 1.0f, 4.0f);
+        f32 originX = DMAP_X + DMAP_W / 2 - (info.minX + w / 2) * zoom;
+        f32 originY = DMAP_Y + DMAP_H / 2 - (info.minY + h / 2) * zoom;
+
+        gfx = Panel_SetScissor(gfx, DMAP_X, DMAP_Y, DMAP_X + DMAP_W, DMAP_Y + DMAP_H);
+        gfx = MapDisp_DrawPanelDungeonMap(play, gfx, storey, originX, originY, zoom, dungeon);
+        // Link, pulsing, when he's on the floor being shown
+        if (storey == info.playerStorey) {
+            s32 px = (s32)(originX + info.playerX * zoom);
+            s32 py = (s32)(originY + info.playerY * zoom);
+            s32 ring = 18 + (s32)(Math_SinS(play->state.frames * 0x1000) * 4.0f);
+
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 160);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, px - ring / 2, py - ring / 2,
+                                  ring, ring);
+            gfx = Panel_SetTexturedMode(gfx, 230, 30, 20, 255);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, px - 6, py - 6, 12, 12);
+        }
+        gfx = Panel_SetScissor(gfx, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, DualScreen_GetCanvasHeight());
+    } else {
+        gfx = Panel_SetSilhouetteMode(gfx, 200, 200, 210, 255);
+        gfx = Panel_DrawText(gfx, "No map for this area.", DMAP_X + 20, DMAP_Y + 20, LOG_TEXT);
+    }
+
+    // Floor buttons, top floor first: Link's floor marked red, the boss's with a skull
+    for (y = 0; y < info.numStoreys; y++) {
+        s32 fy = Panel_DungeonFloorY(&info, y);
+        s32 shown = info.storeyVisited[y];
+        s32 selected = (y == storey);
+
+        gfx = Panel_FillRect(gfx, DFLOOR_X, fy, DFLOOR_W, DFLOOR_H, 20, 25, 45, selected ? 230 : (shown ? 150 : 60));
+        if (selected) {
+            gfx = Panel_FillRect(gfx, DFLOOR_X, fy, DFLOOR_W, 3, 150, 150, 255, 255);
+            gfx = Panel_FillRect(gfx, DFLOOR_X, fy + DFLOOR_H - 3, DFLOOR_W, 3, 150, 150, 255, 255);
+        }
+        if (shown) {
+            gfx = Panel_SetTexturedMode(gfx, selected ? 150 : 255, selected ? 150 : 255, selected ? 255 : 200, 255);
+            gfx = Panel_DrawTex8b(gfx, MapDisp_GetDungeonMapFloorTexture(info.bottomStorey + y), G_IM_FMT_IA, 24, 16,
+                                  DFLOOR_X + 2, fy + 4, 60, 40);
+        }
+        if (y == info.playerStorey) {
+            gfx = Panel_SetTexturedMode(gfx, 230, 30, 20, 255);
+            gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, DFLOOR_X + DFLOOR_W + 16,
+                                  fy + DFLOOR_H / 2 - 7, 14, 14);
+        }
+        if (y == info.bossStorey) {
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+            gfx = Panel_DrawTex8b(gfx, gDungeonMapSkullTex, G_IM_FMT_IA, 16, 16, DFLOOR_X + DFLOOR_W + 1,
+                                  fy + DFLOOR_H / 2 - 8, 16, 16);
+        }
+    }
+
+    // The temple's items down the right
+    gfx = Panel_DrawDungeonItem(gfx, CHECK_DUNGEON_ITEM(DUNGEON_MAP, dungeon), gQuestIconDungeonMapTex, DMAP_Y,
                                 "Map");
-    x += 140;
-    gfx = Panel_DrawDungeonItem(gfx, CHECK_DUNGEON_ITEM(DUNGEON_COMPASS, dungeon), gQuestIconCompassTex, 24, x,
-                                140, "Compass");
-    x += 140;
-    gfx = Panel_DrawDungeonItem(gfx, CHECK_DUNGEON_ITEM(DUNGEON_BOSS_KEY, dungeon), gQuestIconBossKeyTex, 24, x,
-                                140, "Boss Key");
-    x += 140;
-    gfx = Panel_DrawDungeonItem(gfx, keys > 0, gQuestIconSmallKeyTex, 24, x, 140, "Small Keys");
-    Panel_FormatNumber(count, CLAMP_MIN(keys, 0));
+    gfx = Panel_DrawDungeonItem(gfx, CHECK_DUNGEON_ITEM(DUNGEON_COMPASS, dungeon), gQuestIconCompassTex, DMAP_Y + 70,
+                                "Compass");
+    gfx = Panel_DrawDungeonItem(gfx, CHECK_DUNGEON_ITEM(DUNGEON_BOSS_KEY, dungeon), gQuestIconBossKeyTex,
+                                DMAP_Y + 140, "Boss Key");
+    gfx = Panel_DrawDungeonItem(gfx, keys > 0, gQuestIconSmallKeyTex, DMAP_Y + 210, "Keys");
     gfx = Panel_SetTexturedMode(gfx, 0, 0, 0, 150);
-    gfx = Panel_DrawCounter(gfx, CLAMP_MIN(keys, 0), x + 84, 196, 13, 26);
+    gfx = Panel_DrawCounter(gfx, keys, DITEM_X + 58, DMAP_Y + 248, 11, 22);
     gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
-    gfx = Panel_DrawCounter(gfx, CLAMP_MIN(keys, 0), x + 82, 194, 13, 26);
+    gfx = Panel_DrawCounter(gfx, keys, DITEM_X + 56, DMAP_Y + 246, 11, 22);
 
     // Stray fairies rescued here, gold once all 15 are back
     gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
-    gfx = Panel_DrawTexRGBA32(gfx, sDungeonFairyTex[dungeon], 32, 24, 150, 290, 96, 72);
+    gfx = Panel_DrawTexRGBA32(gfx, sDungeonFairyTex[dungeon], 32, 24, DITEM_X + 8, DMAP_Y + 296, 64, 48);
     Panel_FormatFraction(count, fairies, 15);
     if (fairies >= 15) {
         gfx = Panel_SetSilhouetteMode(gfx, 190, 130, 20, 255);
     } else {
         gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
     }
-    gfx = Panel_DrawText(gfx, count, 270, 306, 1.8f);
-    gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
-    return Panel_DrawText(gfx, "Stray Fairies", 270, 346, LOG_TEXT);
+    return Panel_DrawText(gfx, count, DITEM_X + 4, DMAP_Y + 352, LOG_TEXT);
 }
 
 // #endregion
@@ -3116,7 +3220,7 @@ void DualScreen_Draw(PlayState* play) {
     } else if (sPage == DUAL_SCREEN_PAGE_QUEST) {
         gfx = Panel_DrawQuestPage(gfx);
     } else if ((sPage == DUAL_SCREEN_PAGE_MAP) && (Panel_CurrentDungeon(play) >= 0)) {
-        gfx = Panel_DrawDungeonCard(gfx, Panel_CurrentDungeon(play));
+        gfx = Panel_DrawDungeonMapPage(gfx, play, Panel_CurrentDungeon(play));
     } else if (sPage == DUAL_SCREEN_PAGE_MAP) {
         gfx = Panel_DrawMapPage(gfx, play);
     } else if (sPage == DUAL_SCREEN_PAGE_NOTEBOOK) {

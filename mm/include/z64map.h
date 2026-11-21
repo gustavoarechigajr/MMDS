@@ -46,6 +46,22 @@ mapCompactId
 #define MAPDATA_DRAW_2 2
 #define MAPDATA_DRAW_3 3
 
+// 2S2H [Dual Screen] What the second screen needs to draw the dungeon map (z_map_disp.c)
+typedef struct {
+    s32 numStoreys;   // 0 when this scene has no dungeon map
+    s32 bottomStorey; // floor number of storey 0 (0 = 1F, -1 = B1)
+    s32 playerStorey;
+    s32 bossStorey;   // -1 without the compass
+    u8 storeyVisited[6];
+    f32 playerX;      // Link, in map space
+    f32 playerY;
+    s16 playerRot;
+    f32 minX;         // the storey's rooms, in map space
+    f32 minY;
+    f32 maxX;
+    f32 maxY;
+} MapDispPanelInfo;
+
 /* z_map_disp */
 typedef struct {
     /* 0x00 */ MapDataScene* mapDataScene;
@@ -94,6 +110,9 @@ void func_80102EB4(u32 flag);
 void func_80102ED0(u32 flag);
 s32 MapDisp_CurRoomHasMapI(struct PlayState* play);
 void MapDisp_Init(struct PlayState* play);
+void MapDisp_GetPanelInfo(struct PlayState* play, s32 storey, s32 dungeonIndex, MapDispPanelInfo* info);
+Gfx* MapDisp_DrawPanelDungeonMap(struct PlayState* play, Gfx* gfx, s32 storey, f32 originX, f32 originY, f32 zoom,
+                                 s32 dungeonIndex);
 s32 MapDisp_GetBossIconY(void);
 s16 MapDisp_GetBossRoomStorey(void);
 void MapDisp_InitMapData(struct PlayState* play, void* segmentAddress);

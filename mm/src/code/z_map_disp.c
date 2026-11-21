@@ -2187,3 +2187,319 @@ void MapDisp_UpdateDungeonMap(PlayState* play) {
         }
     }
 }
+
+// #region 2S2H [Dual Screen] The pause menu's dungeon map for the second screen
+
+// Map space: the pause menu's map texels, relative to the scene's middle. The panel places it with an origin and a
+// zoom, so the same rooms, palettes, exits, chests and boss icon can be drawn at any size.
+static f32 MapDisp_PanelScaleFrac(void) {
+    MapDataRoom* mapDataRoom;
+    s32 compactId;
+    s32 scale;
+
+    if ((sMapDisp.mapDataScene == NULL) || (sSceneNumRooms == 0)) {
+        return 0.0f;
+    }
+    mapDataRoom = sMapDisp.mapDataScene->rooms;
+    if ((mapDataRoom->mapId == MAP_DATA_NO_MAP) || (mapDataRoom->mapId >= MAPDATA_MAP_GRAND_MAX)) {
+        return 0.0f;
+    }
+    compactId = MapData_GetMapCompactId(mapDataRoom->mapId);
+    if (compactId == -1) {
+        return 0.0f;
+    }
+    scale = MapData_CPID_GetMapScale(compactId);
+    return 1.0f / ((scale == 0) ? 80 : scale);
+}
+
+static s32 MapDisp_PanelRoomOnStorey(s32 room, s32 storey) {
+    MapDataRoom* mapDataRoom = &sMapDisp.mapDataScene->rooms[room];
+
+    return (storey >= sMapDisp.roomStoreyList[room]) &&
+           (storey <= sMapDisp.roomStoreyList[room] + MAP_DATA_ROOM_GET_EXTRA_STOREYS(mapDataRoom));
+}
+
+// A room's texture rectangle in map space; false if the room has no map
+static s32 MapDisp_PanelRoomRect(s32 room, f32 scaleFrac, TexturePtr* tex, s32* texW, s32* texH, f32* x, f32* y) {
+    MapDataRoom* mapDataRoom = &sMapDisp.mapDataScene->rooms[room];
+    s32 compactId;
+    s32 offsetX;
+    s32 offsetY;
+
+    if ((mapDataRoom->mapId == MAP_DATA_NO_MAP) || (mapDataRoom->mapId >= MAPDATA_MAP_GRAND_MAX)) {
+        return false;
+    }
+    compactId = MapData_GetMapCompactId(mapDataRoom->mapId);
+    if (compactId == -1) {
+        return false;
+    }
+    *tex = NULL;
+    MapDisp_GetMapITexture((void**)tex, compactId);
+    if (*tex == NULL) {
+        return false;
+    }
+    MapData_CPID_GetTexDim(compactId, texW, texH);
+    MapData_CPID_GetTexOffset(compactId, &offsetX, &offsetY);
+    if (mapDataRoom->flags & MAP_DATA_ROOM_FLIP_X) {
+        offsetX = ((*texW / 2) - offsetX) + (*texW / 2);
+    }
+    if (mapDataRoom->flags & MAP_DATA_ROOM_FLIP_Y) {
+        offsetY = ((*texH / 2) - offsetY) + (*texH / 2);
+    }
+    *x = (mapDataRoom->centerX - (f32)sMapDisp.sceneMidX) * scaleFrac - offsetX;
+    *y = (mapDataRoom->centerZ - (f32)sMapDisp.sceneMidZ) * scaleFrac - offsetY;
+    if (sMirrorWorldActive) {
+        *x = -*x - *texW;
+    }
+    return true;
+}
+
+static f32 MapDisp_PanelPointX(f32 worldX, f32 scaleFrac) {
+    f32 x = (worldX - sMapDisp.sceneMidX) * scaleFrac;
+
+    return sMirrorWorldActive ? -x : x;
+}
+
+static f32 MapDisp_PanelPointY(f32 worldZ, f32 scaleFrac) {
+    return (worldZ - sMapDisp.sceneMidZ) * scaleFrac;
+}
+
+static s32 MapDisp_PanelRoomShown(PlayState* play, s32 room, s32 dungeonIndex) {
+    return (room == play->roomCtx.curRoom.num) ||
+           GET_ROOM_VISITED(Play_GetOriginalSceneId(MapDisp_ConvertBossSceneToDungeonScene(play->sceneId)), room) ||
+           CHECK_DUNGEON_ITEM(DUNGEON_MAP, dungeonIndex);
+}
+
+void MapDisp_GetPanelInfo(PlayState* play, s32 storey, s32 dungeonIndex, MapDispPanelInfo* info) {
+    Player* player = GET_PLAYER(play);
+    f32 scaleFrac = MapDisp_PanelScaleFrac();
+    s32 i;
+
+    memset(info, 0, sizeof(*info));
+    info->bossStorey = -1;
+    if (scaleFrac == 0.0f) {
+        return;
+    }
+    info->numStoreys = CLAMP(sMapDisp.numStoreys, 0, 5);
+    info->bottomStorey = sMapDisp.bottomStorey;
+    info->playerStorey = MapDisp_GetPlayerStorey(player->actor.world.pos.y);
+    if (CHECK_DUNGEON_ITEM(DUNGEON_COMPASS, dungeonIndex)) {
+        info->bossStorey = MapDisp_GetBossRoomStorey();
+    }
+    for (i = 0; i < info->numStoreys; i++) {
+        info->storeyVisited[i] =
+            GET_DUNGEON_FLOOR_VISITED(Play_GetOriginalSceneId(MapDisp_ConvertBossSceneToDungeonScene(play->sceneId)),
+                                      4 - i) ||
+            CHECK_DUNGEON_ITEM_ALT(DUNGEON_MAP, dungeonIndex) || (i == info->playerStorey);
+    }
+    info->playerX = MapDisp_PanelPointX(player->actor.world.pos.x, scaleFrac);
+    info->playerY = MapDisp_PanelPointY(player->actor.world.pos.z, scaleFrac);
+    info->playerRot = sMirrorWorldActive ? -player->actor.shape.rot.y : player->actor.shape.rot.y;
+
+    // Bounds of every room on this storey (shown or not), so the floor doesn't jump as rooms are found
+    info->minX = info->minY = 1e9f;
+    info->maxX = info->maxY = -1e9f;
+    for (i = 0; i < sSceneNumRooms; i++) {
+        TexturePtr tex;
+        s32 texW;
+        s32 texH;
+        f32 x;
+        f32 y;
+
+        if (!MapDisp_PanelRoomOnStorey(i, storey) || !MapDisp_PanelRoomRect(i, scaleFrac, &tex, &texW, &texH, &x, &y)) {
+            continue;
+        }
+        info->minX = MIN(info->minX, x);
+        info->minY = MIN(info->minY, y);
+        info->maxX = MAX(info->maxX, x + texW);
+        info->maxY = MAX(info->maxY, y + texH);
+    }
+    if (info->minX > info->maxX) {
+        info->minX = info->minY = -40.0f;
+        info->maxX = info->maxY = 40.0f;
+    }
+}
+
+Gfx* MapDisp_DrawPanelDungeonMap(PlayState* play, Gfx* gfx, s32 storey, f32 originX, f32 originY, f32 zoom,
+                                 s32 dungeonIndex) {
+    // The pause menu's palettes: unvisited, visited and current room (z_map_disp's MapDisp_DrawRooms)
+    // clang-format off
+    static u8 sPanelRoomPal[3][0x10 * 2] = {
+        { SPLIT(0x0000), SPLIT(0x0000), SPLIT(0xFFC1), SPLIT(0x07C1), SPLIT(0x07FF), SPLIT(0x003F), SPLIT(0xFB3F), SPLIT(0xF305),
+          SPLIT(0x0453), SPLIT(0x0577), SPLIT(0x0095), SPLIT(0x82E5), SPLIT(0xFD27), SPLIT(0x7A49), SPLIT(0x94A5), SPLIT(0x0001) },
+        { SPLIT(0x0000), SPLIT(0x027F), SPLIT(0xFFC1), SPLIT(0x07C1), SPLIT(0x07FF), SPLIT(0x003F), SPLIT(0xFB3F), SPLIT(0xF305),
+          SPLIT(0x0453), SPLIT(0x0577), SPLIT(0x0095), SPLIT(0x82E5), SPLIT(0xFD27), SPLIT(0x7A49), SPLIT(0x94A5), SPLIT(0x0001) },
+        { SPLIT(0x0000), SPLIT(0x0623), SPLIT(0xFFC1), SPLIT(0x07C1), SPLIT(0x07FF), SPLIT(0x003F), SPLIT(0xFB3F), SPLIT(0xF305),
+          SPLIT(0x0453), SPLIT(0x0577), SPLIT(0x0095), SPLIT(0x82E5), SPLIT(0xFD27), SPLIT(0x7A49), SPLIT(0x94A5), SPLIT(0x0001) },
+    };
+    // clang-format on
+    f32 scaleFrac = MapDisp_PanelScaleFrac();
+    s32 anim = play->state.frames % 80;
+    s32 pulse = (anim < 40) ? anim : (80 - anim); // 0..40, as the pause menu's animTimer
+    s32 green = ((pulse * -120.0f / 40.0f) + 200.0f) * 31.0f / 255.0f;
+    s32 blue = ((pulse * 115.0f / 40.0f) + 140.0f) * 31.0f / 255.0f;
+    u16 pulseColor = (green << 6) | (blue << 1) | 1;
+    u16 outline = CHECK_DUNGEON_ITEM(DUNGEON_MAP, dungeonIndex) ? 0xAD5F : 0;
+    s32 i;
+    s32 p;
+
+    if (scaleFrac == 0.0f) {
+        return gfx;
+    }
+    sPanelRoomPal[2][2] = (pulseColor >> 8) & 0xFF;
+    sPanelRoomPal[2][3] = pulseColor & 0xFF;
+    for (p = 0; p < 3; p++) {
+        sPanelRoomPal[p][0xF * 2] = (outline >> 8) & 0xFF;
+        sPanelRoomPal[p][0xF * 2 + 1] = outline & 0xFF;
+    }
+
+    // Rooms
+    gDPPipeSync(gfx++);
+    gDPSetCombineMode(gfx++, G_CC_MODULATEIDECALA_PRIM, G_CC_MODULATEIDECALA_PRIM);
+    gDPSetRenderMode(gfx++, G_RM_XLU_SURF, G_RM_XLU_SURF2);
+    gDPSetPrimColor(gfx++, 0, 0, 255, 255, 255, 255);
+    gDPLoadTLUT_pal16(gfx++, 0, sPanelRoomPal[0]);
+    gDPLoadTLUT_pal16(gfx++, 1, sPanelRoomPal[1]);
+    gDPLoadTLUT_pal16(gfx++, 2, sPanelRoomPal[2]);
+    gDPSetTextureLUT(gfx++, G_TT_RGBA16);
+    for (i = 0; i < sSceneNumRooms; i++) {
+        MapDataRoom* mapDataRoom = &sMapDisp.mapDataScene->rooms[i];
+        TexturePtr tex;
+        s32 texW;
+        s32 texH;
+        f32 x;
+        f32 y;
+        s32 pal;
+        s32 s = 0;
+        s32 t = 0;
+        s32 dsdx = (s32)(1024.0f / zoom);
+        s32 dtdy = (s32)(1024.0f / zoom);
+
+        if (!MapDisp_PanelRoomOnStorey(i, storey) || !MapDisp_PanelRoomRect(i, scaleFrac, &tex, &texW, &texH, &x, &y) ||
+            !MapDisp_PanelRoomShown(play, i, dungeonIndex)) {
+            continue;
+        }
+        if (i == play->roomCtx.curRoom.num) {
+            pal = Map_IsInBossScene(play) ? 1 : 2;
+        } else if (GET_ROOM_VISITED(Play_GetOriginalSceneId(MapDisp_ConvertBossSceneToDungeonScene(play->sceneId)),
+                                    i)) {
+            pal = 1;
+        } else {
+            pal = 0;
+        }
+        if (mapDataRoom->flags & MAP_DATA_ROOM_FLIP_X) {
+            s = texW << 5;
+            dsdx = 0x10000 - dsdx;
+        }
+        if (mapDataRoom->flags & MAP_DATA_ROOM_FLIP_Y) {
+            t = (texH - 1) << 5;
+            dtdy = 0x10000 - dtdy;
+        }
+        gDPLoadTextureBlock_4b(gfx++, tex, G_IM_FMT_CI, texW, texH, pal, G_TX_NOMIRROR | G_TX_CLAMP,
+                               G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+        // The palettes change, so the texture can't be reused from the cache as it was
+        gSPInvalidateTexCache(gfx++, tex);
+        gSPWideTextureRectangle(gfx++, (s32)((originX + x * zoom) * 4), (s32)((originY + y * zoom) * 4),
+                                (s32)((originX + (x + texW) * zoom) * 4), (s32)((originY + (y + texH) * zoom) * 4),
+                                G_TX_RENDERTILE, s, t, dsdx & 0xFFFF, dtdy & 0xFFFF);
+        gDPPipeSync(gfx++);
+    }
+    gDPSetTextureLUT(gfx++, G_TT_NONE);
+
+    // Doors between rooms, as small white squares
+    gDPSetCombineMode(gfx++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+    gDPSetPrimColor(gfx++, 0, 0, 255, 255, 255, 255);
+    gDPLoadTextureBlock_4b(gfx++, &sWhiteSquareTex, G_IM_FMT_I, 16, 16, 0, G_TX_NOMIRROR | G_TX_WRAP,
+                           G_TX_NOMIRROR | G_TX_WRAP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    for (i = 0; i < sTransitionActorList.count; i++) {
+        s8 roomA = sTransitionActors[i].sides[0].room;
+        s8 roomB = sTransitionActors[i].sides[1].room;
+        f32 x;
+        f32 y;
+        f32 half = MAX(zoom, 1.0f);
+
+        if (!MapDisp_IsOnStorey(storey, sTransitionActors[i].pos.y) ||
+            (ABS_ALT(sTransitionActors[i].id) == ACTOR_EN_HOLL) || MapDisp_IsBossDoor(sTransitionActors[i].params)) {
+            continue;
+        }
+        if (!CHECK_DUNGEON_ITEM(DUNGEON_MAP, dungeonIndex) && (roomA >= 0) && (roomB >= 0) &&
+            !MapDisp_PanelRoomShown(play, roomA, dungeonIndex) && !MapDisp_PanelRoomShown(play, roomB, dungeonIndex)) {
+            continue;
+        }
+        x = originX + MapDisp_PanelPointX(sTransitionActors[i].pos.x, scaleFrac) * zoom;
+        y = originY + MapDisp_PanelPointY(sTransitionActors[i].pos.z, scaleFrac) * zoom;
+        gSPWideTextureRectangle(gfx++, (s32)((x - half) * 4), (s32)((y - half) * 4), (s32)((x + half) * 4),
+                                (s32)((y + half) * 4), G_TX_RENDERTILE, 0, 0, 1 << 10, 1 << 10);
+    }
+
+    // With the compass: the boss door and the unopened chests
+    if (CHECK_DUNGEON_ITEM(DUNGEON_COMPASS, dungeonIndex)) {
+        s32 icon = (s32)(8 * zoom);
+
+        gDPPipeSync(gfx++);
+        gDPSetCombineMode(gfx++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+        gDPLoadTextureBlock(gfx++, gMapBossIconTex, G_IM_FMT_IA, G_IM_SIZ_8b, 8, 8, 0, G_TX_NOMIRROR | G_TX_CLAMP,
+                            G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+        for (i = 0; i < sTransitionActorList.count; i++) {
+            f32 x;
+            f32 y;
+
+            if (!MapDisp_IsBossDoor(sTransitionActors[i].params) ||
+                !MapDisp_IsOnStorey(storey, sTransitionActors[i].pos.y) ||
+                (ABS_ALT(sTransitionActors[i].id) == ACTOR_EN_HOLL)) {
+                continue;
+            }
+            x = originX + MapDisp_PanelPointX(sTransitionActors[i].pos.x, scaleFrac) * zoom - icon / 2;
+            y = originY + MapDisp_PanelPointY(sTransitionActors[i].pos.z, scaleFrac) * zoom - icon / 2;
+            gSPWideTextureRectangle(gfx++, (s32)(x * 4), (s32)(y * 4), (s32)((x + icon) * 4), (s32)((y + icon) * 4),
+                                    G_TX_RENDERTILE, 0, 0, (8 << 10) / icon, (8 << 10) / icon);
+        }
+
+        gDPPipeSync(gfx++);
+        gDPSetCombineMode(gfx++, G_CC_MODULATEIDECALA_PRIM, G_CC_MODULATEIDECALA_PRIM);
+        gDPLoadTextureBlock(gfx++, gMapChestIconTex, G_IM_FMT_RGBA, G_IM_SIZ_16b, 8, 8, 0, G_TX_NOMIRROR | G_TX_CLAMP,
+                            G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+        for (i = 0; (sMapDisp.mapDataChests != NULL) && (i < sMapDisp.numChests); i++) {
+            MapDataChest* chest = &sMapDisp.mapDataChests[i];
+            s32 sceneId;
+            s32 opened;
+            f32 x;
+            f32 y;
+
+            switch (play->sceneId) {
+                case SCENE_MITURIN_BS:
+                    sceneId = SCENE_MITURIN;
+                    break;
+                case SCENE_HAKUGIN_BS:
+                    sceneId = SCENE_HAKUGIN;
+                    break;
+                case SCENE_SEA_BS:
+                    sceneId = SCENE_SEA;
+                    break;
+                case SCENE_INISIE_BS:
+                    sceneId = SCENE_INISIE_N;
+                    break;
+                default:
+                    sceneId = -1;
+                    break;
+            }
+            // GET_CYCLE_CHEST_OPENED ends in a semicolon, so it can't sit inside an expression
+            if (sceneId >= 0) {
+                opened = GET_CYCLE_CHEST_OPENED(sceneId, chest->chestFlagId)
+            } else {
+                opened = Flags_GetTreasure(play, chest->chestFlagId);
+            }
+            if (opened || !MapDisp_PanelRoomOnStorey(chest->room, storey) || !MapDisp_IsOnStorey(storey, chest->y)) {
+                continue;
+            }
+            x = originX + MapDisp_PanelPointX(chest->x, scaleFrac) * zoom - icon / 2;
+            y = originY + MapDisp_PanelPointY(chest->z, scaleFrac) * zoom - icon / 2;
+            gSPWideTextureRectangle(gfx++, (s32)(x * 4), (s32)(y * 4), (s32)((x + icon) * 4), (s32)((y + icon) * 4),
+                                    G_TX_RENDERTILE, 0, 0, (8 << 10) / icon, (8 << 10) / icon);
+        }
+    }
+    gDPPipeSync(gfx++);
+    return gfx;
+}
+
+// #endregion
