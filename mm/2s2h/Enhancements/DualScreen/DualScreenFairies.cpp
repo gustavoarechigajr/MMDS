@@ -10,6 +10,12 @@
 #include "2s2h/resource/type/scenecommand/SetActorList.h"
 #include <libultraship/libultraship.h>
 #include <vector>
+#if defined(__ANDROID__)
+#include <android/log.h>
+#define FAIRY_LOG(...) __android_log_print(ANDROID_LOG_INFO, "DSFairy", __VA_ARGS__)
+#else
+#define FAIRY_LOG(...)
+#endif
 
 extern "C" {
 #include "z64.h"
@@ -37,8 +43,10 @@ const RandoItemId kDungeonFairyItems[] = { RI_WOODFALL_STRAY_FAIRY, RI_SNOWHEAD_
 bool ActorFairyFlag(const SOH::ActorEntry& entry, FlagType* flagType, int32_t* flag) {
     uint16_t params = (uint16_t)entry.params;
 
-    switch (entry.id) {
-        case ACTOR_EN_ELFORG: // floating, in a bubble, or held by an enemy
+    // The top bits of a room's actor id are spawn flags (as Actor_SpawnEntry masks them off)
+    switch (entry.id & 0x1FFF) {
+        case ACTOR_EN_ELFORG: // floating, or held by an enemy
+        case ACTOR_EN_ELFBUB: // in a bubble
             *flagType = FLAG_CYCL_SCENE_SWITCH;
             *flag = (params & 0xFE00) >> 9;
             return true;
@@ -103,9 +111,13 @@ void Build(PlayState* play, int32_t dungeon) {
             }
         }
     }
-    for (bool f : found) {
-        sUnplaced += f ? 0 : 1;
+    for (size_t i = 0; i < found.size(); i++) {
+        sUnplaced += found[i] ? 0 : 1;
+        if (!found[i]) {
+            FAIRY_LOG("unplaced: flag type %d flag 0x%02X", (int)wanted[i].first, wanted[i].second);
+        }
     }
+    FAIRY_LOG("scene %d: %d fairies wanted, %d placed", (int)sceneId, (int)wanted.size(), (int)sSpots.size());
 }
 
 bool Collected(PlayState* play, const FairySpot& spot) {
