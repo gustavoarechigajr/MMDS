@@ -13540,6 +13540,18 @@ s32 Ship_HandleFirstPersonAiming(PlayState* play, Player* this, s32 arg2) {
 
         gyroX *= CVarGetFloat("gEnhancements.Camera.FirstPerson.GyroSensitivityX", 1.0f);
         gyroY *= CVarGetFloat("gEnhancements.Camera.FirstPerson.GyroSensitivityY", 1.0f);
+
+        // 2S2H [Dual Screen] Most frames turn by a fraction of an angle unit, and adding a fraction to the s16
+        // angles below truncates it, always toward zero: sensor noise then walks the aim off to one side while the
+        // device sits still. Carry the fraction over to the next frame instead.
+        static f32 sGyroCarryX = 0.0f;
+        static f32 sGyroCarryY = 0.0f;
+        gyroX += sGyroCarryX;
+        gyroY += sGyroCarryY;
+        sGyroCarryX = gyroX - truncf(gyroX);
+        sGyroCarryY = gyroY - truncf(gyroY);
+        gyroX = truncf(gyroX);
+        gyroY = truncf(gyroY);
     }
 
     if (CVarGetInteger("gEnhancements.Camera.FirstPerson.RightStickEnabled", 0)) {
