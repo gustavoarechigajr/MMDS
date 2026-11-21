@@ -77,6 +77,7 @@ Open the 2S2H menu in game (the menu button in the top screen's touch overlay).
 | Second Screen Panels | on | **on**: everything on the bottom screen |
 | Second Screen Map Clouds | on | on: hides regions until you buy their map from Tingle, as the pause menu does (also the map's cloud button) |
 | Use Items From Second Screen | on | **on**: touching an equipped button presses it in game |
+| Hide Top Screen Minimap | on | the Map tab shows the area, so the main screen's minimap is hidden |
 | Second Screen Target Info | on | on: name and health of the Z-targeted enemy |
 | Second Screen Target Portrait | on | on: a live 3D model of the target in that card |
 | Second Screen FPS and Input | off | off: frame rate and held buttons on the bottom screen, for testing |
