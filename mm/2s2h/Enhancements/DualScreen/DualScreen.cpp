@@ -118,6 +118,26 @@ static void RegisterDualScreenSongs() {
 
 static RegisterShipInitFunc sDualScreenSongsInit(RegisterDualScreenSongs, {});
 
+#if defined(__ANDROID__)
+#include <android/log.h>
+extern "C" PlayState* gPlayState;
+
+// Gyro diagnostics (gDebug.GyroLog): where Link is actually aiming, to compare with the turn the gyro measured
+static void RegisterGyroAimLog() {
+    COND_HOOK(OnGameStateUpdate, CVarGetInteger("gDebug.GyroLog", 0), []() {
+        static int32_t sFrames = 0;
+        if (gPlayState == nullptr || (++sFrames % 10) != 0) {
+            return;
+        }
+        Player* player = GET_PLAYER(gPlayState);
+        __android_log_print(ANDROID_LOG_INFO, "DSGyro", "aim focusYaw %+.1f bodyYaw %+.1f deg",
+                            player->actor.focus.rot.y * (360.0f / 65536.0f), player->actor.shape.rot.y * (360.0f / 65536.0f));
+    });
+}
+
+static RegisterShipInitFunc sGyroAimLogInit(RegisterGyroAimLog, { "gDebug.GyroLog" });
+#endif
+
 // #endregion
 
 // #region Frame rate and target health
