@@ -421,7 +421,8 @@ extern "C" void DualScreen_PresentFrame(void) {
             ANativeWindow_release(window);
         }
     }
-    if (sPresent.surface == EGL_NO_SURFACE || sFrameBufferId == -1 || CVarGetInteger(CVAR_DUAL_SCREEN, 1) == 0) {
+    if (sPresent.surface == EGL_NO_SURFACE || sFrameBufferId == -1 || CVarGetInteger(CVAR_DUAL_SCREEN, 1) == 0 ||
+        CVarGetInteger("gDebug.DualScreenSkipPresent", 0)) { // audio tests: measure the hand-off's cost
         return;
     }
 

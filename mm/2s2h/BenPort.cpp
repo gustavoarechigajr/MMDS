@@ -30,6 +30,7 @@
 
 #include <fast/interpreter.h>
 #include "2s2h/Enhancements/DualScreen/DualScreen.h"
+#include "2s2h/Enhancements/DualScreen/AudioDiag.h"
 #include <fast/backends/gfx_rendering_api.h>
 #include <fast/Fast3dWindow.h>
 
@@ -663,7 +664,11 @@ void OTRGlobals::Initialize() {
 
     // 2S2H [Dual Screen] ~75 ms of headroom instead of ~52 ms: at high interpolation rates one late frame
     // could drain the queue and make the audio choppy
-    context->InitAudio({ .SampleRate = 32000, .SampleLength = 1024, .DesiredBuffered = 2400 });
+    int32_t audioSampleLength = 1024;
+    int32_t audioDesiredBuffered = 2400;
+    AudioDiag_ConfigureBackend(&audioSampleLength, &audioDesiredBuffered);
+    context->InitAudio(
+        { .SampleRate = 32000, .SampleLength = audioSampleLength, .DesiredBuffered = audioDesiredBuffered });
 
     SPDLOG_INFO("Starting 2 Ship 2 Harkinian version {} (Branch: {} | Commit: {})", (char*)gBuildVersion,
                 (char*)gGitBranch, (char*)gGitCommitHash);
@@ -855,18 +860,31 @@ void OTRAudio_Thread() {
 #define AUDIO_FRAMES_PER_UPDATE (R_UPDATE_RATE > 0 ? R_UPDATE_RATE : 1)
 #define NUM_AUDIO_CHANNELS 2
 
+        auto synthStart = std::chrono::steady_clock::now();
         int samples_left = AudioPlayer_Buffered();
         u32 num_audio_samples = samples_left < AudioPlayer_GetDesiredBuffered() ? SAMPLES_HIGH : SAMPLES_LOW;
+        // 2S2H [Dual Screen] Audio is made once per game frame, with only ~5% room to speed up. When game frames
+        // run late (heavy second-screen pages at 120 FPS) the queue drains and the device plays silence. With
+        // less than a frame's worth left, make a second batch now so the music keeps real time, as the N64's
+        // audio thread ran on its own clock.
+        int batches = (samples_left < (int)(SAMPLES_LOW * AUDIO_FRAMES_PER_UPDATE) &&
+                       !CVarGetInteger("gDebug.AudioNoCatchUp", 0))
+                          ? 2
+                          : 1;
 
-        // 3 is the maximum authentic frame divisor.
-        s16 audio_buffer[SAMPLES_HIGH * NUM_AUDIO_CHANNELS * 3];
-        for (int i = 0; i < AUDIO_FRAMES_PER_UPDATE; i++) {
-            AudioMgr_CreateNextAudioBuffer(audio_buffer + i * (num_audio_samples * NUM_AUDIO_CHANNELS),
-                                           num_audio_samples);
+        for (int batch = 0; batch < batches; batch++) {
+            // 3 is the maximum authentic frame divisor.
+            s16 audio_buffer[SAMPLES_HIGH * NUM_AUDIO_CHANNELS * 3];
+            for (int i = 0; i < AUDIO_FRAMES_PER_UPDATE; i++) {
+                AudioMgr_CreateNextAudioBuffer(audio_buffer + i * (num_audio_samples * NUM_AUDIO_CHANNELS),
+                                               num_audio_samples);
+            }
+            AudioPlayer_Play((u8*)audio_buffer,
+                             num_audio_samples * (sizeof(int16_t) * NUM_AUDIO_CHANNELS * AUDIO_FRAMES_PER_UPDATE));
         }
-
-        AudioPlayer_Play((u8*)audio_buffer,
-                         num_audio_samples * (sizeof(int16_t) * NUM_AUDIO_CHANNELS * AUDIO_FRAMES_PER_UPDATE));
+        AudioDiag_OnPush(samples_left, batches * num_audio_samples * AUDIO_FRAMES_PER_UPDATE,
+                         std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - synthStart)
+                             .count());
 
         audio.processing = false;
         audio.cv_from_thread.notify_one();
@@ -881,6 +899,7 @@ extern "C" void OTRAudio_Init() {
     if (!audio.running) {
         audio.running = true;
         audio.thread = std::thread(OTRAudio_Thread);
+        AudioDiag_Start();
     }
 }
 
@@ -1232,8 +1251,31 @@ void RunCommands(Gfx* Commands, int time, int step, int denom, int count) {
     UIWidgets::Colors themeColor =
         static_cast<UIWidgets::Colors>(CVarGetInteger("gSettings.Menu.Theme", UIWidgets::Colors::LightBlue));
     ImGui::PushStyleColor(ImGuiCol_TitleBgActive, UIWidgets::ColorValues.at(themeColor));
+    // 2S2H [Dual Screen] Keep game frames on schedule: a replay that runs past its vsync slot (the frame that also
+    // draws the second screen, say) costs a whole extra slot, so the game and its audio fall behind real time.
+    // When behind, drop an in-between interpolated frame instead; the final frame of each game frame always runs.
+    using SteadyClock = std::chrono::steady_clock;
+    static SteadyClock::time_point sFrameTarget;
+    const auto gameFrameDur = std::chrono::duration<double, std::milli>(1000.0 * R_UPDATE_RATE / 60.0);
+    const auto slotDur = gameFrameDur / std::max(count, 1);
+    const bool keepSchedule = !CVarGetInteger("gDebug.NoFrameSkip", 0) && count > 2;
+    {
+        auto now = SteadyClock::now();
+        auto target = std::chrono::time_point_cast<SteadyClock::duration>(sFrameTarget);
+        if (target + gameFrameDur * 2 < now || target > now + gameFrameDur * 2) {
+            sFrameTarget = now; // first frame, or too far off after a pause: start over
+        }
+        sFrameTarget += std::chrono::duration_cast<SteadyClock::duration>(gameFrameDur);
+    }
+
     for (int i = 0; i < count; i++) {
         time += step;
+        if (keepSchedule && i > 0 && i < count - 1 &&
+            SteadyClock::now() + (count - i) * slotDur > sFrameTarget + slotDur / 2) {
+            intp->mInterpolationIndex++;
+            AudioDiag_OnSkippedFrame();
+            continue;
+        }
         std::unordered_map<Mtx*, MtxF> mtx_replacements =
             (time == denom) ? std::unordered_map<Mtx*, MtxF>() : FrameInterpolation_Interpolate((float)time / denom);
         intp->mInterpolationT = (float)time / denom;
@@ -1297,7 +1339,10 @@ extern "C" void Graph_ProcessGfxCommands(Gfx* commands) {
         count = 1;
     }
 
+    auto renderStart = std::chrono::steady_clock::now();
     RunCommands(commands, start_time, step, next_original_frame, count);
+    AudioDiag_OnFrame(
+        std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - renderStart).count());
 
     last_fps = fps;
     last_update_rate = R_UPDATE_RATE;

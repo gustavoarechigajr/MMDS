@@ -18,6 +18,7 @@
 #include "BenPort.h"
 #include "2s2h/BenGui/HudEditor.h"
 #include "DualScreen.h"
+#include "AudioDiag.h"
 #include "2s2h/GameInteractor/GameInteractor.h"
 #include <libultraship/bridge/consolevariablebridge.h>
 #include <stdlib.h>
@@ -525,6 +526,8 @@ static s32 Panel_TabX(s32 index) {
     return DUAL_SCREEN_CANVAS_WIDTH / 2 - (Panel_TabCount() * STRIP_TAB_SIZE) / 2 + index * STRIP_TAB_SIZE;
 }
 
+static s32 sCycleFrames = 0;
+
 static void Panel_UpdateTabs(s32 canvasHeight) {
     s32 i;
     s32 index = 0;
@@ -538,9 +541,29 @@ static void Panel_UpdateTabs(s32 canvasHeight) {
         }
         if (Panel_Tapped(Panel_TabX(index), tabY, STRIP_TAB_SIZE, STRIP_TAB_SIZE) && (sPage != tab->page)) {
             sPage = tab->page;
+            AudioDiag_Mark("tab switch");
             Audio_PlaySfx(NA_SE_SY_DECIDE);
         }
         index++;
+    }
+    // Audio tests: switch tabs on a timer from inside the game, so no outside tool adds load
+    if ((CVarGetInteger("gDebug.AudioCycleTabs", 0) > 0) &&
+        (++sCycleFrames >= CVarGetInteger("gDebug.AudioCycleTabs", 0))) {
+        s32 next = 0;
+
+        sCycleFrames = 0;
+        for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
+            if (sTabs[i].page == sPage) {
+                next = i;
+            }
+        }
+        for (i = 1; i <= ARRAY_COUNT(sTabs); i++) {
+            if (sTabShown[(next + i) % ARRAY_COUNT(sTabs)]) {
+                sPage = sTabs[(next + i) % ARRAY_COUNT(sTabs)].page;
+                AudioDiag_Mark("tab cycle");
+                break;
+            }
+        }
     }
     if (!Panel_TabAvailable(sPage)) {
         for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
@@ -3078,6 +3101,9 @@ void DualScreen_Draw(PlayState* play) {
     }
     sFramesSincePlayDraw = 0;
     Panel_ReadSettings();
+    if (CVarGetInteger("gDebug.DualScreenSkipDraw", 0)) { // audio tests: measure the panel draw's cost
+        return;
+    }
 
     gfx = Panel_Begin(&start, frameBufferId, canvasHeight);
     if (sWarmupStep < WARMUP_DONE) {
