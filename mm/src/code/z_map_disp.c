@@ -2515,3 +2515,169 @@ Gfx* MapDisp_DrawPanelDungeonMap(PlayState* play, Gfx* gfx, s32 storey, f32 orig
 }
 
 // #endregion
+
+// #region 2S2H [Dual Screen] The current area's minimap for the second screen, with Link's position and facing
+
+s32 MapDisp_PanelAreaAvailable(PlayState* play) {
+    MapDataRoom* mapDataRoom;
+
+    if ((sMapDisp.mapDataScene == NULL) || (sSceneNumRooms == 0) || (sMapDisp.minimapCurTex == NULL) ||
+        (sMapDisp.minimapCurTex == gEmptyTexture) || (sMapDisp.curRoom < 0)) {
+        return false;
+    }
+    mapDataRoom = &sMapDisp.mapDataScene->rooms[sMapDisp.curRoom];
+    return mapDataRoom->mapId != MAP_DATA_NO_MAP;
+}
+
+// Draws the area fitted into the box, then Link as an arrow. Leaves 2D panel state for the caller to restore.
+Gfx* MapDisp_DrawPanelArea(PlayState* play, Gfx* gfx, s32 boxX, s32 boxY, s32 boxW, s32 boxH, s32 canvasW,
+                           s32 canvasH, f32 zoomMul) {
+    Player* player = GET_PLAYER(play);
+    MapDataRoom* mapDataRoom = &sMapDisp.mapDataScene->rooms[sMapDisp.curRoom];
+    TexturePtr texture = sMapDisp.minimapCurTex;
+    Color_RGBA8 color;
+    s32 drawType;
+    s32 texW;
+    s32 texH;
+    s32 offsetX;
+    s32 offsetY;
+    s32 scale;
+    f32 zoom;
+    f32 originX;
+    f32 originY;
+    s32 step;
+    s32 s;
+    s32 t;
+    s32 dsdx;
+    s32 dtdy;
+    f32 px;
+    f32 py;
+    s16 rot;
+    f32 dirX;
+    f32 dirY;
+    Vtx* vtx;
+    Mtx* projection;
+    u16 perspNorm;
+    s32 i;
+
+    MapDisp_GetMapTexDim(mapDataRoom, &texW, &texH);
+    MapDisp_GetMapOffset(mapDataRoom, &offsetX, &offsetY);
+    scale = sMapDisp.mapDataScene->scale;
+    if (scale == 0) {
+        scale = 20;
+    } else if (scale == -1) {
+        MapDisp_GetMapScale(mapDataRoom, &scale);
+    }
+    zoom = MIN((boxW - 16) / (f32)texW, (boxH - 16) / (f32)texH);
+    zoom = CLAMP(zoom, 1.0f, 8.0f) * zoomMul;
+
+    // The minimap texture, as MapDisp_DrawMinimapRoom draws it (stored upside down), scaled up
+    // Link, in the texture's pixels (MapDisp_Minimap_DrawRedCompassIcon's maths)
+    px = (player->actor.world.pos.x - (f32)mapDataRoom->centerX) / scale;
+    py = (player->actor.world.pos.z - (f32)mapDataRoom->centerZ) / scale;
+    rot = player->actor.shape.rot.y;
+    if (MapDisp_IsDataRotated(play)) {
+        px = -px;
+        py = -py;
+        rot += 0x8000;
+    }
+    px += offsetX;
+    py += offsetY;
+    if (sMirrorWorldActive) {
+        px = 2 * offsetX - px;
+        rot = -rot;
+    }
+    // Fitted, the whole area is centred; zoomed in, the view follows Link (blending between the two)
+    {
+        f32 follow = CLAMP((zoomMul - 1.0f) / 0.5f, 0.0f, 1.0f);
+        f32 fitX = boxX + (boxW - texW * zoom) / 2.0f;
+        f32 fitY = boxY + (boxH - texH * zoom) / 2.0f;
+        f32 linkX = boxX + boxW / 2.0f - px * zoom;
+        f32 linkY = boxY + boxH / 2.0f - py * zoom;
+
+        originX = fitX + (linkX - fitX) * follow;
+        originY = fitY + (linkY - fitY) * follow;
+    }
+
+    MapData_GetMapColor(MapData_GetMapColorIndex(mapDataRoom->mapId), &color);
+    MapData_GetDrawType(mapDataRoom->mapId, &drawType);
+    gDPPipeSync(gfx++);
+    gDPSetRenderMode(gfx++, G_RM_XLU_SURF, G_RM_XLU_SURF2);
+    gDPSetPrimColor(gfx++, 0, 0, color.r, color.g, color.b, 255);
+    if (drawType == MAPDATA_DRAW_1) {
+        gDPSetCombineMode(gfx++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+        gDPLoadTextureBlock_4b(gfx++, texture, G_IM_FMT_IA, texW, texH, 0, G_TX_NOMIRROR | G_TX_CLAMP,
+                               G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    } else if (drawType == MAPDATA_DRAW_3) {
+        gDPSetCombineLERP(gfx++, 0, 0, 0, PRIMITIVE, 0, 0, 0, TEXEL0, 0, 0, 0, PRIMITIVE, 0, 0, 0, TEXEL0);
+        gDPLoadTextureBlock_4b(gfx++, texture, G_IM_FMT_I, texW, texH, 0, G_TX_NOMIRROR | G_TX_CLAMP,
+                               G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    } else {
+        gDPSetCombineMode(gfx++, G_CC_MODULATEIA_PRIM, G_CC_MODULATEIA_PRIM);
+        gDPLoadTextureBlock_4b(gfx++, texture, G_IM_FMT_I, texW, texH, 0, G_TX_NOMIRROR | G_TX_CLAMP,
+                               G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    }
+    step = (s32)(1024.0f / zoom);
+    s = (mapDataRoom->flags & MAP_DATA_ROOM_FLIP_X) ? (texW - 1) << 5 : 0;
+    t = (mapDataRoom->flags & MAP_DATA_ROOM_FLIP_Y) ? 0 : (texH - 1) << 5;
+    dsdx = ((mapDataRoom->flags & MAP_DATA_ROOM_FLIP_X) ? -step : step) & 0xFFFF;
+    dtdy = ((mapDataRoom->flags & MAP_DATA_ROOM_FLIP_Y) ? step : -step) & 0xFFFF;
+    gSPWideTextureRectangle(gfx++, (s32)(originX * 4), (s32)(originY * 4), (s32)((originX + texW * zoom) * 4),
+                            (s32)((originY + texH * zoom) * 4), G_TX_RENDERTILE, s, t, dsdx, dtdy);
+    gDPPipeSync(gfx++);
+
+    px = originX + px * zoom;
+    py = originY + py * zoom;
+    // Facing: rotation 0 looks down +Z, which is down the map
+    dirX = Math_SinS(rot);
+    dirY = Math_CosS(rot);
+
+    // The arrow as two triangles in an orthographic view of the panel, a dark outline under a red fill
+    vtx = GRAPH_ALLOC(play->state.gfxCtx, sizeof(Vtx) * 8);
+    projection = GRAPH_ALLOC(play->state.gfxCtx, sizeof(Mtx));
+    for (i = 0; i < 2; i++) {
+        f32 size = (i == 0) ? 1.35f : 1.0f;
+        u8 r = (i == 0) ? 30 : 230;
+        u8 g = (i == 0) ? 0 : 30;
+        u8 b = (i == 0) ? 0 : 20;
+        f32 tipX = px + dirX * 15.0f * size;
+        f32 tipY = py + dirY * 15.0f * size;
+        f32 leftX = px - dirX * 9.0f * size - dirY * 10.0f * size;
+        f32 leftY = py - dirY * 9.0f * size + dirX * 10.0f * size;
+        f32 rightX = px - dirX * 9.0f * size + dirY * 10.0f * size;
+        f32 rightY = py - dirY * 9.0f * size - dirX * 10.0f * size;
+        f32 notchX = px - dirX * 3.0f * size;
+        f32 notchY = py - dirY * 3.0f * size;
+        f32 points[4][2] = { { tipX, tipY }, { leftX, leftY }, { notchX, notchY }, { rightX, rightY } };
+        s32 k;
+
+        for (k = 0; k < 4; k++) {
+            Vtx* v = &vtx[i * 4 + k];
+
+            v->v.ob[0] = (s16)points[k][0];
+            v->v.ob[1] = (s16)points[k][1];
+            v->v.ob[2] = 0;
+            v->v.flag = 0;
+            v->v.tc[0] = v->v.tc[1] = 0;
+            v->v.cn[0] = r;
+            v->v.cn[1] = g;
+            v->v.cn[2] = b;
+            v->v.cn[3] = 255;
+        }
+    }
+    guOrtho(projection, 0.0f, (f32)canvasW, (f32)canvasH, 0.0f, -10.0f, 10.0f, 1.0f);
+    gSPMatrix(gfx++, projection, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    gSPMatrix(gfx++, &gIdentityMtx, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);
+    gSPTexture(gfx++, 0, 0, 0, G_TX_RENDERTILE, G_OFF);
+    gSPClearGeometryMode(gfx++, G_ZBUFFER | G_LIGHTING | G_CULL_BOTH | G_FOG | G_TEXTURE_GEN);
+    gSPSetGeometryMode(gfx++, G_SHADE | G_SHADING_SMOOTH);
+    gDPSetCombineMode(gfx++, G_CC_SHADE, G_CC_SHADE);
+    gDPSetRenderMode(gfx++, G_RM_XLU_SURF, G_RM_XLU_SURF2);
+    gSPVertex(gfx++, vtx, 8, 0);
+    gSP2Triangles(gfx++, 0, 1, 2, 0, 0, 2, 3, 0);
+    gSP2Triangles(gfx++, 4, 5, 6, 0, 4, 6, 7, 0);
+    gDPPipeSync(gfx++);
+    return gfx;
+}
+
+// #endregion

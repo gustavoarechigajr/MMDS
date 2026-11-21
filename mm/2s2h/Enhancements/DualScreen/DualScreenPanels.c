@@ -16,6 +16,7 @@
 #include "interface/icon_item_jpn_static/icon_item_jpn_static.h"
 #include "interface/icon_item_dungeon_static/icon_item_dungeon_static.h"
 #include "BenPort.h"
+#include "2s2h/ShipUtils.h"
 #include "2s2h/BenGui/HudEditor.h"
 #include "DualScreen.h"
 #include "AudioDiag.h"
@@ -2681,10 +2682,21 @@ static s32 Panel_MapY(s32 pauseY) {
 }
 
 // Zooms by a factor while keeping the texel under (screenX, screenY) where it is
+#define MAP_AREA_SWITCH_ZOOM 3.0f // Termina zoom that switches to the area Link is in (Panel_MapAreaView)
+static s32 sMapWorldView;
+static f32 sAreaZoom;
+
 static void Panel_MapZoomAt(f32 factor, f32 screenX, f32 screenY) {
     f32 u = Panel_MapLeft() + (screenX - MAP_X) * Panel_MapVisW() / MAP_W;
     f32 v = Panel_MapTop() + (screenY - MAP_Y) * Panel_MapVisH() / MAP_H;
 
+    // Zoomed in far enough, the area Link is in takes over (when it has a map)
+    if ((factor > 1.0f) && (sMapZoom * factor >= MAP_AREA_SWITCH_ZOOM) && MapDisp_PanelAreaAvailable(gPlayState)) {
+        sMapWorldView = false;
+        sAreaZoom = 1.0f;
+        sMapPinchDist = 0.0f;
+        return;
+    }
     sMapZoom = CLAMP(sMapZoom * factor, 1.0f, MAP_ZOOM_MAX);
     sMapCenterU = u - (screenX - MAP_X) * Panel_MapVisW() / MAP_W + Panel_MapVisW() / 2;
     sMapCenterV = v - (screenY - MAP_Y) * Panel_MapVisH() / MAP_H + Panel_MapVisH() / 2;
@@ -2791,8 +2803,120 @@ static void Panel_UpdateMapView(PlayState* play) {
     sMapDragY = sTouch.y;
 }
 
+// Zooming the Termina map in past a set level switches to the area Link is in (its own map, with an arrow for
+// Link, following him when zoomed in); zooming out of the area returns to Termina
+#define AREA_ZOOM_MAX 3.0f
+static s32 sMapWorldView = false;
+static f32 sAreaZoom = 1.0f;
+static f32 sAreaPinchDist = 0.0f;
+
+static s32 Panel_MapAreaView(PlayState* play) {
+    return !sMapWorldView && MapDisp_PanelAreaAvailable(play);
+}
+
+static void Panel_MapRecentre(PlayState* play, f32 zoom);
+
+// Back out to Termina, zoomed in on Link's region just below the switch level
+static void Panel_LeaveAreaView(PlayState* play) {
+    sMapWorldView = true;
+    sAreaZoom = 1.0f;
+    Panel_MapRecentre(play, MAP_AREA_SWITCH_ZOOM / 1.5f);
+    Audio_PlaySfx(NA_SE_SY_CURSOR);
+}
+
+static void Panel_UpdateAreaView(PlayState* play) {
+    if (Panel_Tapped(MAP_BTN_X, MAP_BTN_Y(0), MAP_BTN, MAP_BTN)) {
+        sAreaZoom = MIN(sAreaZoom * 1.5f, AREA_ZOOM_MAX);
+        Audio_PlaySfx(NA_SE_SY_CURSOR);
+        return;
+    }
+    if (Panel_Tapped(MAP_BTN_X, MAP_BTN_Y(1), MAP_BTN, MAP_BTN)) {
+        if (sAreaZoom <= 1.01f) {
+            Panel_LeaveAreaView(play);
+        } else {
+            sAreaZoom = MAX(sAreaZoom / 1.5f, 1.0f);
+            Audio_PlaySfx(NA_SE_SY_CURSOR);
+        }
+        return;
+    }
+    // Pinch
+    if (sTouch.down && (sTouch.pointers >= 2)) {
+        f32 dx = sTouch.x2 - sTouch.x;
+        f32 dy = sTouch.y2 - sTouch.y;
+        f32 dist = sqrtf(dx * dx + dy * dy);
+
+        if ((sAreaPinchDist > 0.0f) && (dist > 1.0f)) {
+            sAreaZoom *= dist / sAreaPinchDist;
+            if (sAreaZoom < 0.8f) {
+                sAreaPinchDist = 0.0f;
+                Panel_LeaveAreaView(play);
+                return;
+            }
+            sAreaZoom = CLAMP(sAreaZoom, 1.0f, AREA_ZOOM_MAX);
+        }
+        sAreaPinchDist = dist;
+    } else {
+        sAreaPinchDist = 0.0f;
+    }
+}
+
+static Gfx* Panel_DrawAreaPage(Gfx* gfx, PlayState* play) {
+    s32 region = Panel_CurrentRegion(play);
+    const char* name = Ship_GetSceneName(play->sceneId);
+    s32 i;
+
+    gfx = Panel_FillRect(gfx, MAP_X, MAP_Y, MAP_W, MAP_H, 20, 25, 45, 220);
+    gfx = Panel_SetScissor(gfx, MAP_X, MAP_Y, MAP_X + MAP_W, MAP_Y + MAP_H);
+    gfx = MapDisp_DrawPanelArea(play, gfx, MAP_X, MAP_Y, MAP_W, MAP_H, DUAL_SCREEN_CANVAS_WIDTH,
+                                DualScreen_GetCanvasHeight(), sAreaZoom);
+    // Back to the panel's 2D state and the main view's matrices
+    gDPPipeSync(gfx++);
+    gfx = Gfx_SetupDL39(gfx);
+    gDPSetTextureFilter(gfx++, G_TF_BILERP);
+    gDPSetTextureLUT(gfx++, G_TT_NONE);
+    gSPMatrix(gfx++, play->view.projectionPtr, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    gSPMatrix(gfx++, play->view.viewingPtr, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
+    gfx = Panel_SetScissor(gfx, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, DualScreen_GetCanvasHeight());
+
+    // Zoom in and out, as on the Termina map
+    for (i = 0; i < 2; i++) {
+        static const char* sLabels[] = { "+", "-" };
+        s32 pressed = Panel_Pressing(MAP_BTN_X, MAP_BTN_Y(i), MAP_BTN, MAP_BTN);
+
+        gfx = Panel_SetTexturedMode(gfx, 255, 245, 215, pressed ? 255 : 220);
+        gfx = Panel_DrawTex8b(gfx, gButtonBackgroundTex, G_IM_FMT_IA, 32, 32, MAP_BTN_X, MAP_BTN_Y(i), MAP_BTN, MAP_BTN);
+        gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+        gfx = Panel_DrawText(gfx, sLabels[i], MAP_BTN_X + (MAP_BTN - Panel_TextWidth(sLabels[i], 1, 1.6f)) / 2 - 1,
+                             MAP_BTN_Y(i) + 7, 1.6f);
+    }
+
+    gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+    gfx = Panel_DrawTextN(gfx, (name != NULL) ? name : ((region >= 0) ? sRegionNames[region] : "Termina"), 32, 20,
+                          MAP_INFO_Y + 4, 1.2f);
+    gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
+    return Panel_DrawText(gfx, "The arrow is Link. Zoom out to see all of Termina.", 20, MAP_INFO_Y + 32, LOG_SMALL);
+}
+
+static void Panel_MapRecentre(PlayState* play, f32 zoom) {
+    s32 region = Panel_CurrentRegion(play);
+
+    sMapZoom = zoom;
+    if (region >= 0) {
+        s32 quad = MAP_QUAD_REGIONS + region;
+
+        sMapCenterU = sVtxPageMapWorldQuadsX[quad] + gVtxPageMapWorldQuadsWidth[quad] / 2 - MAP_IMAGE_X0;
+        sMapCenterV = MAP_IMAGE_Y0 - (sVtxPageMapWorldQuadsY[quad] - gVtxPageMapWorldQuadsHeight[quad] / 2);
+    }
+    Panel_MapClampView();
+}
+
 static void Panel_UpdateMapPage(PlayState* play) {
     s32 owl;
+
+    if (Panel_MapAreaView(play)) {
+        Panel_UpdateAreaView(play);
+        return;
+    }
 
     Panel_UpdateMapView(play);
     if (Panel_Tapped(MAP_BTN_X, MAP_BTN_Y(0), MAP_BTN, MAP_BTN)) {
@@ -2813,16 +2937,7 @@ static void Panel_UpdateMapPage(PlayState* play) {
     }
     if (Panel_Tapped(MAP_BTN_X, MAP_BTN_Y(2), MAP_BTN, MAP_BTN)) {
         // Recentre on Link, zooming in if the whole map is showing
-        s32 region = Panel_CurrentRegion(play);
-
-        if (region >= 0) {
-            s32 quad = MAP_QUAD_REGIONS + region;
-
-            sMapZoom = MAX(sMapZoom, 2.0f);
-            sMapCenterU = sVtxPageMapWorldQuadsX[quad] + gVtxPageMapWorldQuadsWidth[quad] / 2 - MAP_IMAGE_X0;
-            sMapCenterV = MAP_IMAGE_Y0 - (sVtxPageMapWorldQuadsY[quad] - gVtxPageMapWorldQuadsHeight[quad] / 2);
-            Panel_MapClampView();
-        }
+        Panel_MapRecentre(play, MAX(sMapZoom, 2.0f));
         Audio_PlaySfx(NA_SE_SY_CURSOR);
         return;
     }
@@ -2855,6 +2970,10 @@ static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play) {
     s32 y;
     s32 region = Panel_CurrentRegion(play);
     s32 pulse = 140 + (s32)(Math_SinS(play->state.frames * 0x1000) * 110.0f);
+
+    if (Panel_MapAreaView(play)) {
+        return Panel_DrawAreaPage(gfx, play);
+    }
 
     // The map itself: a paletted image, loaded whole like 2S2H's HD-aware pause menu does
     gDPPipeSync(gfx++);
