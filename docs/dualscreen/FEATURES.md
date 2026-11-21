@@ -5,6 +5,7 @@ This is a custom build of the linkzenic 2S2H Android fork (v5.0.1-android.3). It
 - **App:** "2 Ship Dual Screen" (`com.twoshipfork.mm.dualscreen`). It installs alongside the regular 2S2H, and both share `/sdcard/2S2H` (saves, settings, mods). Run only one of them at a time.
 - **Latest APK:** `~/android-dev/2Ship-DualScreen-v41.apk`
 - **Source:** `~/android-dev/2ship`, branch `dualscreen` (18 commits; libultraship submodule also on a `dualscreen` branch)
+- **Install, mods and settings:** [SETUP.md](SETUP.md)
 - **Progress tracker:** [2S2H-DualScreen-Roadmap.md](ROADMAP.md)
 
 ---
