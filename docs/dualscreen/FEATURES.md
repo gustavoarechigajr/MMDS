@@ -56,6 +56,7 @@ This is a custom build of the linkzenic 2S2H Android fork (v5.0.1-android.3). It
 - **Masks:** all 24 masks; missing ones show as dark outlines. Tap one for its name and status.
 - **Side Quests:** this cycle's progress on Anju and Kafei, Romani Ranch, the Old Lady and the Postman, read from the notebook's flags (they reset with the Song of Time).
 - **Collection:** pieces of heart, stray fairies, both Skulltula houses, Bombers' Notebook people, masks and the bank.
+- **Guides:** tap a quest or side quest for its guide: every step with a gold stamp when done, the next step highlighted, when it can be done, and the items it needs (faded until you have them).
 - **Hints:** the **Lens of Truth** button reveals a short hint for the selected entry in a box along the bottom. Hints stay hidden until you ask.
 
 ### Notebook
@@ -84,7 +85,7 @@ This is a custom build of the linkzenic 2S2H Android fork (v5.0.1-android.3). It
 
 ### Timeline
 
-- **The tab (sun icon):** your remains, today and the hours left, then the three days as rows from 6:00 to 6:00. Day and night are shaded, the past is dimmed, and a sun or moon marks now.
+- **The tab (sun icon):** one day at a time (1st / 2nd / Final, opening on today), from 6:00 to 6:00, with your remains and the hours left. Day and night are shaded, the past is dimmed, and a sun or moon marks now. A full notebook scrolls.
 - **Appointments:** the Bombers' Notebook appointments of people you've met sit on each day as bars with their portrait, gold once done. Tap one to read it.
 - **Double Time:** tap a later hour for "Skip to …", then **Double Time** to play the song and jump there (needs the Song of Time and 2S2H's Better Song of Double Time).
 - **On the strip:** a day/night timeline with a red marker for now; tap it to open the Timeline. The moon icon grows as the end nears.

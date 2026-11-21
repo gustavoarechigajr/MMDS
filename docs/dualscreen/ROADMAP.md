@@ -256,3 +256,7 @@ Status key: `[ ]` todo · `[~]` in progress · `[x]` done and verified on the Th
     - Tap a future hour for "Skip to …" plus a **Double Time** button. It plays the song and hands the hour to 2S2H's Better Song of Double Time through `BetterSongOfDoubleTime_SetPendingTarget` (confirmed once no text box is open; expires after ~10 s). Verified: Day 2 5:08 → Final Day 20:17.
     - Strip: 8 px day/night timeline with a red "now" marker; tapping it opens the Timeline. The moon icon grows from 26 to 44 px as time runs out. Tabs shrink to 44 px when there are 8.
   - Testing rule from the user: only load the slot-2 test copy (`tools/loadtest.sh` checks File 2 is highlighted first).
+- 2026-11-21: v62–v63.
+  - **Timeline for a full notebook:** with all 20 people met, a day has 17–25 appointments needing up to 17 lanes. The tab now shows one day at a time (1st/2nd/Final selector, opens on today, red dot on today), sorted and packed into lanes, with drag-to-scroll and a scroll bar. Verified with all 20 met on a slot-2 copy.
+  - **Quest guides** (user request): tapping a Main Quest region or a Side Quest opens its guide. It lists every step with a numbered stamp (gold when done), the next step highlighted, when it happens (`sQuestStepExtras` / `sSideStepExtras`), and up to 3 needed items (full colour once owned, faded if missing; bottles check slot 1). With the Lens on, hints appear inline (up to 4 steps), or for longer quests in a box for the tapped/next step.
+  - Fixed: the Lens toggle wasn't saved (`CVarSave`).
