@@ -2557,7 +2557,7 @@ Gfx* MapDisp_DrawPanelArea(PlayState* play, Gfx* gfx, s32 boxX, s32 boxY, s32 bo
     f32 dirY;
     Vtx* vtx;
     Mtx* projection;
-    u16 perspNorm;
+    Vp* viewport;
     s32 i;
 
     MapDisp_GetMapTexDim(mapDataRoom, &texW, &texH);
@@ -2637,9 +2637,10 @@ Gfx* MapDisp_DrawPanelArea(PlayState* play, Gfx* gfx, s32 boxX, s32 boxY, s32 bo
     projection = GRAPH_ALLOC(play->state.gfxCtx, sizeof(Mtx));
     for (i = 0; i < 2; i++) {
         f32 size = (i == 0) ? 1.35f : 1.0f;
-        u8 r = (i == 0) ? 30 : 230;
-        u8 g = (i == 0) ? 0 : 30;
-        u8 b = (i == 0) ? 0 : 20;
+        // Yellow, like Link's arrow on the minimap (the red one there marks where he came in)
+        u8 r = (i == 0) ? 40 : 230;
+        u8 g = (i == 0) ? 30 : 255;
+        u8 b = (i == 0) ? 0 : 0;
         f32 tipX = px + dirX * 15.0f * size;
         f32 tipY = py + dirY * 15.0f * size;
         f32 leftX = px - dirX * 9.0f * size - dirY * 10.0f * size;
@@ -2665,6 +2666,14 @@ Gfx* MapDisp_DrawPanelArea(PlayState* play, Gfx* gfx, s32 boxX, s32 boxY, s32 bo
             v->v.cn[3] = 255;
         }
     }
+    // A viewport covering the whole panel, so the projection's canvas units land where they should (left alone, the
+    // main view's viewport applies and the arrow ends up scaled away from Link)
+    viewport = GRAPH_ALLOC(play->state.gfxCtx, sizeof(Vp));
+    viewport->vp.vscale[0] = viewport->vp.vtrans[0] = canvasW * 2;
+    viewport->vp.vscale[1] = viewport->vp.vtrans[1] = canvasH * 2;
+    viewport->vp.vscale[2] = viewport->vp.vtrans[2] = G_MAXZ / 2;
+    viewport->vp.vscale[3] = viewport->vp.vtrans[3] = 0;
+    gSPViewport(gfx++, viewport);
     guOrtho(projection, 0.0f, (f32)canvasW, (f32)canvasH, 0.0f, -10.0f, 10.0f, 1.0f);
     gSPMatrix(gfx++, projection, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
     gSPMatrix(gfx++, &gIdentityMtx, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_MODELVIEW);

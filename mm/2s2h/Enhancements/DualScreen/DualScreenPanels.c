@@ -2860,20 +2860,27 @@ static void Panel_UpdateAreaView(PlayState* play) {
     }
 }
 
+// The area map fills the page above the strip; its name sits in the corner
+#define AREA_X 8
+#define AREA_Y 8
+#define AREA_W (DUAL_SCREEN_CANVAS_WIDTH - 16)
+#define AREA_H (STRIP_Y - 16)
+
 static Gfx* Panel_DrawAreaPage(Gfx* gfx, PlayState* play) {
     s32 region = Panel_CurrentRegion(play);
     const char* name = Ship_GetSceneName(play->sceneId);
     s32 i;
 
-    gfx = Panel_FillRect(gfx, MAP_X, MAP_Y, MAP_W, MAP_H, 20, 25, 45, 220);
-    gfx = Panel_SetScissor(gfx, MAP_X, MAP_Y, MAP_X + MAP_W, MAP_Y + MAP_H);
-    gfx = MapDisp_DrawPanelArea(play, gfx, MAP_X, MAP_Y, MAP_W, MAP_H, DUAL_SCREEN_CANVAS_WIDTH,
+    gfx = Panel_FillRect(gfx, AREA_X, AREA_Y, AREA_W, AREA_H, 20, 25, 45, 220);
+    gfx = Panel_SetScissor(gfx, AREA_X, AREA_Y, AREA_X + AREA_W, AREA_Y + AREA_H);
+    gfx = MapDisp_DrawPanelArea(play, gfx, AREA_X, AREA_Y, AREA_W, AREA_H, DUAL_SCREEN_CANVAS_WIDTH,
                                 DualScreen_GetCanvasHeight(), sAreaZoom);
     // Back to the panel's 2D state and the main view's matrices
     gDPPipeSync(gfx++);
     gfx = Gfx_SetupDL39(gfx);
     gDPSetTextureFilter(gfx++, G_TF_BILERP);
     gDPSetTextureLUT(gfx++, G_TT_NONE);
+    gSPViewport(gfx++, &play->view.vp);
     gSPMatrix(gfx++, play->view.projectionPtr, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
     gSPMatrix(gfx++, play->view.viewingPtr, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
     gfx = Panel_SetScissor(gfx, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, DualScreen_GetCanvasHeight());
@@ -2890,11 +2897,9 @@ static Gfx* Panel_DrawAreaPage(Gfx* gfx, PlayState* play) {
                              MAP_BTN_Y(i) + 7, 1.6f);
     }
 
-    gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
-    gfx = Panel_DrawTextN(gfx, (name != NULL) ? name : ((region >= 0) ? sRegionNames[region] : "Termina"), 32, 20,
-                          MAP_INFO_Y + 4, 1.2f);
-    gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 255);
-    return Panel_DrawText(gfx, "The arrow is Link. Zoom out to see all of Termina.", 20, MAP_INFO_Y + 32, LOG_SMALL);
+    gfx = Panel_SetSilhouetteMode(gfx, 230, 235, 255, 230);
+    return Panel_DrawTextN(gfx, (name != NULL) ? name : ((region >= 0) ? sRegionNames[region] : "Termina"), 32,
+                           AREA_X + 12, AREA_Y + 10, 1.0f);
 }
 
 static void Panel_MapRecentre(PlayState* play, f32 zoom) {
