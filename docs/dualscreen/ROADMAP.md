@@ -227,3 +227,10 @@ Status key: `[ ]` todo · `[~]` in progress · `[x]` done and verified on the Th
   - **5.2 Next line verified,** and fixed: an appointment already under way now reads "Now  until 18:00  Romani" instead of its past start time.
   - **6.1 target card still unseen:** Z (left trigger, `sendevent ... 3 10 32767`) engages, but no enemy was in reach from the temple entrance. Handed to the user together with bow hold-to-aim.
   - Deleted APKs v1–v39 (~1.4 GB); v41 is current.
+- 2026-11-20: v42–v51. **Target card frame + 3D portrait, and Thor gyro aiming:**
+  - Target card: the dialogue-box background (`gMessageDefaultBackgroundTex`, mirrored) as its frame; the targeted actor's own model drawn again into the card (`Panel_DrawTargetPortrait`: OPA/XLU/overlay pointers redirected into the panel list, interpolation recording paused, own camera/lights, fog pushed out). Viewports are flipped vertically in off-screen framebuffers, like scissors. After the portrait, `Gfx_SetupDL39` restores the 2D state (the actor's draw left it broken). Option "Second Screen Target Portrait". Verified on Link via `gDebug.DualScreenPortraitPlayer`, and on a real enemy (Black Boe) for the name and health.
+  - Gyro: 2S2H only feeds the device gyro once a gyro mapping exists. `AndroidGyro.cpp` maps it automatically when gyro aiming is on.
+  - Root cause of the drift: SDL (and `enableSensor`) left the Thor's gyro at **5 Hz** (sensor service: `samplingPeriod=200000us`). libultraship now opens its own `ASensorEventQueue` with `ASensorEventQueue_registerSensor` (dlsym, API 26) at 200 Hz, and averages every event per game-frame poll.
+  - Yaw is "relaxed player space": the size from the non-pitch rotation (capped at 1.75x the part around gravity), the direction from gravity (accelerometer).
+  - Verified: a 95° turn flat on a table came back within 1°. The remaining in-hand mismatch is arm-vs-wrist motion (gyros can't see translation).
+  - Gyro sensitivity set to 0.72 (1:1; the game's default factor is 1.38x). First-person stick Invert Y turned off (user preference). Diagnostics: `gDebug.GyroLog` (logcat `DSGyro`: rates, running yaw total, Link's aim angle).

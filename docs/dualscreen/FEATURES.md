@@ -5,7 +5,7 @@ This is a custom build of the linkzenic 2S2H Android fork (v5.0.1-android.3). It
 - **App:** "2 Ship Dual Screen" (`com.twoshipfork.mm.dualscreen`). It installs alongside the regular 2S2H, and both share `/sdcard/2S2H` (saves, settings, mods). Run only one of them at a time.
 - **Latest APK:** `~/android-dev/2Ship-DualScreen-v41.apk`
 - **Source:** `~/android-dev/2ship`, branch `dualscreen` (18 commits; libultraship submodule also on a `dualscreen` branch)
-- **Install, mods and settings:** [SETUP.md](SETUP.md)
+- **Install, mods and settings:** [2S2H-DualScreen-Setup.md](SETUP.md)
 - **Progress tracker:** [2S2H-DualScreen-Roadmap.md](ROADMAP.md)
 
 ---
@@ -71,7 +71,11 @@ This is a custom build of the linkzenic 2S2H Android fork (v5.0.1-android.3). It
 
 ### Over every page
 
-- **Target info:** while you Z-target an enemy, a card at the top shows its name and a health bar (gold edges for bosses).
+- **Target info:** while you Z-target an enemy, a card in the game's dialogue-box style shows a live 3D portrait of it, its name and a health bar (gold edges for bosses).
+
+### Gyro aiming (Android)
+
+- With first-person gyro aiming on, the device's own gyro is mapped automatically. It's read at 200 Hz and measured around the real vertical, so turns add back up properly. A sensitivity of 0.72 is 1:1 with your actual rotation.
 - **FPS and input** (off by default): a bar above the strip with the real frame rate, the stick and the buttons you're holding.
 
 ### Left-handed

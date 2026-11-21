@@ -78,6 +78,7 @@ Open the 2S2H menu in game (the menu button in the top screen's touch overlay).
 | Second Screen Map Clouds | on | on: hides regions until you buy their map from Tingle, as the pause menu does (also the map's cloud button) |
 | Use Items From Second Screen | on | **on**: touching an equipped button presses it in game |
 | Second Screen Target Info | on | on: name and health of the Z-targeted enemy |
+| Second Screen Target Portrait | on | on: a live 3D model of the target in that card |
 | Second Screen FPS and Input | off | off: frame rate and held buttons on the bottom screen, for testing |
 | Second Screen Left-Handed | off | your choice: puts the controller on the left of the Items and Masks pages and reverses the tabs |
 | Second Screen Tab: Items / Masks / Songs / Map / Quest Log / Notebook / Checks | on | hide any tab you don't use (Checks only appears in randomizer saves) |
@@ -88,6 +89,12 @@ Open the 2S2H menu in game (the menu button in the top screen's touch overlay).
 |---|---|
 | **Enhancements → Dpad Equips** (`gEnhancements.Dpad.DpadEquips`) **on** | The four D-pad slots on the Items and Masks pages only exist with this on. |
 | **Use Alternate Assets on**, with MM Reloaded installed | The HD world map on the Map tab. |
+
+### Gyro aiming
+
+**Enhancements → Camera → First Person → Gyro Aiming** on. This build maps the device's gyro by itself, so there's no Input Editor step.
+- **Gyro X/Y Axis Sensitivity at 72%** makes the aim turn exactly as far as you turn the device. 2S2H's default of 100% turns it 1.38x further.
+- **Turn the device, don't swing it.** A gyro only senses rotation, not sideways movement.
 
 ### Frame rate
 
