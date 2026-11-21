@@ -2243,21 +2243,27 @@ static Gfx* Panel_DrawNotebookDetails(Gfx* gfx, PlayState* play) {
 
     // Nothing picked: what's next today
     if (Panel_NextNotebookEntry(&person, &j)) {
-        s32 start = (s32)TIME_TO_MINUTES_F(NB_ENTRY_START(person, j));
+        // Already under way: say "Now" and when it ends, rather than a start time that has passed
+        s32 ongoing = Panel_NotebookMinutes(NB_ENTRY_START(person, j)) <= Panel_NotebookMinutes(CURRENT_TIME);
+        s32 time = (s32)TIME_TO_MINUTES_F(ongoing ? NB_ENTRY_END_TIME(person, j) : NB_ENTRY_START(person, j));
         char line[160];
         char* p = line;
 
         Panel_MessageText(play, sBombersNotebookTextIds[person], title, sizeof(title), true);
-        p = Panel_FormatNumber(p, start / 60);
+        if (ongoing) {
+            strcpy(p, "until ");
+            p += strlen(p);
+        }
+        p = Panel_FormatNumber(p, time / 60);
         *p++ = ':';
-        *p++ = '0' + (start % 60) / 10;
-        *p++ = '0' + (start % 60) % 10;
+        *p++ = '0' + (time % 60) / 10;
+        *p++ = '0' + (time % 60) % 10;
         *p++ = ' ';
         *p++ = ' ';
         strcpy(p, title);
         gfx = Panel_FillRect(gfx, 8, 444, 584, 30, 0, 0, 0, 150);
         gfx = Panel_SetSilhouetteMode(gfx, 255, 220, 120, 255);
-        gfx = Panel_DrawText(gfx, "Next", 20, 450, LOG_SMALL);
+        gfx = Panel_DrawText(gfx, ongoing ? "Now" : "Next", 20, 450, LOG_SMALL);
         gfx = Panel_SetSilhouetteMode(gfx, 255, 255, 255, 255);
         gfx = Panel_DrawText(gfx, line, 74, 450, LOG_SMALL);
     }
