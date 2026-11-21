@@ -473,7 +473,7 @@ typedef struct PanelTab {
 } PanelTab;
 
 static PanelTab sTabs[] = {
-    { DUAL_SCREEN_PAGE_ITEMS, ITEM_OCARINA_OF_TIME, "gEnhancements.DualScreen.Tab.Items" },
+    { DUAL_SCREEN_PAGE_ITEMS, ITEM_BOW, "gEnhancements.DualScreen.Tab.Items" },
     { DUAL_SCREEN_PAGE_MASKS, ITEM_MASK_DEKU, "gEnhancements.DualScreen.Tab.Masks" },
     { DUAL_SCREEN_PAGE_QUEST, ITEM_SONG_TIME, "gEnhancements.DualScreen.Tab.Songs" },
     { DUAL_SCREEN_PAGE_MAP, ITEM_COMPASS, "gEnhancements.DualScreen.Tab.Map" }, // ITEM_COMPASS's icon is the map
