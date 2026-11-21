@@ -7,9 +7,9 @@
 #   ds.sh swipe X1 Y1 X2 Y2    swipe on the bottom screen in canvas units
 #   ds.sh log                  DualScreen log lines
 PKG=com.twoshipfork.mm.dualscreen
-OUT=${OUT:-/tmp/claude-1000/-home-deck-Projects/9d82db8f-49d9-475a-8428-229fad8d827f/scratchpad}
+OUT=${OUT:-${TMPDIR:-/tmp}/mmds}
 APK_DIR=$HOME/android-dev
-TOP=4630946441858561667
+TOP=4630946441858561667 # AYN Thor display ids (adb shell dumpsys SurfaceFlinger --display-id)
 BOT=4630946482288158084
 S=1.9375 # 1240 px / 640 canvas units
 mkdir -p "$OUT"

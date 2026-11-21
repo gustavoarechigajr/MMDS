@@ -3,7 +3,8 @@
 # Usage: audiorun.sh <label> '<json of CVars to merge>'
 T=~/android-dev/tools/ds.sh
 export ANDROID_SERIAL=${ANDROID_SERIAL:-$(adb devices | awk '$2=="device"{print $1; exit}')}
-OUT=/tmp/claude-1000/-home-deck-Projects/9d82db8f-49d9-475a-8428-229fad8d827f/scratchpad
+OUT=${OUT:-${TMPDIR:-/tmp}/mmds}
+mkdir -p "$OUT"
 BASE=$HOME/Backups/2S2H_saves/1120_before_audio_tests/config.json
 adb shell am force-stop com.twoshipfork.mm.dualscreen
 python3 -I -c "

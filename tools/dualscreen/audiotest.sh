@@ -3,7 +3,8 @@
 # Usage: audiotest.sh <label> [noload]
 T=~/android-dev/tools/ds.sh
 export ANDROID_SERIAL=${ANDROID_SERIAL:-$(adb devices | awk '$2=="device"{print $1; exit}')}
-OUT=${OUT:-/tmp/claude-1000/-home-deck-Projects/9d82db8f-49d9-475a-8428-229fad8d827f/scratchpad}
+OUT=${OUT:-${TMPDIR:-/tmp}/mmds}
+mkdir -p "$OUT"
 if [ "$2" != noload ]; then
     $T btn a; sleep 2; $T btn a; sleep 2; $T btn a; sleep 15
 fi

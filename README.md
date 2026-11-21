@@ -1,3 +1,37 @@
+# MMDS: Majora's Mask on two screens
+
+**MMDS** turns the second screen of a dual-screen Android handheld into a Majora's Mask 3D-style touch screen, built on [2 Ship 2 Harkinian](https://github.com/HarbourMasters/2ship2harkinian) (2S2H). It was made for and tested on the **AYN Thor**.
+
+Everything on the second screen is drawn with the game's own art and font:
+
+- **Items and Masks:** tap or drag to equip; touch a button to use it.
+- **Songs:** a music guide; tap a song to play it.
+- **Map:** the area you're in, with an arrow for Link; zoom out to Termina, tap an owl to warp. Inside temples, the floor map with chests, the boss room and a stray fairy tracker.
+- **Quest Log:** main and side quests with step-by-step guides, masks and collectibles, and hints behind the Lens of Truth.
+- **Bombers' Notebook:** the real notebook, scrollable, with every entry readable.
+- **Timeline:** each day's appointments; tap a later hour to skip there with the Song of Double Time.
+- **Target info:** the Z-targeted enemy's name, health and a live 3D portrait.
+- **Also:** a moon countdown, gyro aiming on the device's own gyroscope, an FPS/input display, and a randomizer check tracker.
+
+**You need your own Majora's Mask ROM.** No game data is included in this repository or in its releases.
+
+- **Install, mods and settings:** [docs/dualscreen/SETUP.md](docs/dualscreen/SETUP.md)
+- **Every feature:** [docs/dualscreen/FEATURES.md](docs/dualscreen/FEATURES.md)
+- **Development history and open items:** [docs/dualscreen/ROADMAP.md](docs/dualscreen/ROADMAP.md)
+
+The app installs as **"2 Ship Dual Screen"** (`com.twoshipfork.mm.dualscreen`), next to the regular 2S2H app, and shares its `/sdcard/2S2H` folder (saves, settings, mods).
+
+### Credits
+
+- [HarbourMasters](https://github.com/HarbourMasters/2ship2harkinian): 2 Ship 2 Harkinian and libultraship
+- [Waterdish](https://github.com/Waterdish/2ship2harkinian-Android): the original Android port
+- [linkzenic](https://github.com/linkzenic/2ship2harkinian-Android): the Android fork this builds on
+- [GhostlyDark](https://github.com/GhostlyDark/MM-Reloaded-2S2H): MM Reloaded, the HD texture pack the second screen was designed around (installed separately)
+
+The upstream Android port's README follows.
+
+---
+
 # 2 Ship 2 Harkinian Android
 
 Android port of 2 Ship 2 Harkinian, based on the HarbourMasters project and forked from Waterdish's original Android port.
