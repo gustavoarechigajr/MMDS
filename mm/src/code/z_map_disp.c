@@ -2320,6 +2320,18 @@ void MapDisp_GetPanelInfo(PlayState* play, s32 storey, s32 dungeonIndex, MapDisp
     }
 }
 
+// A world position in map space, if it lies on the given storey
+s32 MapDisp_PanelWorldPoint(f32 worldX, f32 worldY, f32 worldZ, s32 storey, f32* x, f32* y) {
+    f32 scaleFrac = MapDisp_PanelScaleFrac();
+
+    if ((scaleFrac == 0.0f) || !MapDisp_IsOnStorey(storey, worldY)) {
+        return false;
+    }
+    *x = MapDisp_PanelPointX(worldX, scaleFrac);
+    *y = MapDisp_PanelPointY(worldZ, scaleFrac);
+    return true;
+}
+
 Gfx* MapDisp_DrawPanelDungeonMap(PlayState* play, Gfx* gfx, s32 storey, f32 originX, f32 originY, f32 zoom,
                                  s32 dungeonIndex) {
     // The pause menu's palettes: unvisited, visited and current room (z_map_disp's MapDisp_DrawRooms)

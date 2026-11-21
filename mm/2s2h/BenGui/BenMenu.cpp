@@ -1393,6 +1393,12 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions()
                      .DefaultValue(true)
                      .Tooltip("While you Z-target an enemy, the second screen shows its name and health."));
+    AddWidget(path, "Second Screen Fairy Tracker", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.FairyTracker")
+        .Options(CheckboxOptions()
+                     .DefaultValue(true)
+                     .Tooltip("Once you have a temple's compass, its map on the second screen shows where the stray "
+                              "fairies you haven't found yet are."));
     AddWidget(path, "Second Screen Target Portrait", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.DualScreen.TargetPortrait")
         .Options(CheckboxOptions()

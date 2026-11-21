@@ -2739,6 +2739,33 @@ static s32 Panel_DungeonFloorY(MapDispPanelInfo* info, s32 storey) {
     return DMAP_Y + (DMAP_H - total) / 2 + (info->numStoreys - 1 - storey) * (DFLOOR_H + DFLOOR_GAP);
 }
 
+#define CVAR_FAIRY_TRACKER "gEnhancements.DualScreen.FairyTracker"
+
+// Like chests and the boss door, the stray fairies show once the temple's compass is found (not in rando, where
+// the items they give are shuffled elsewhere)
+static s32 Panel_FairyTrackerOn(s32 dungeon) {
+    return CVarGetInteger(CVAR_FAIRY_TRACKER, 1) && CHECK_DUNGEON_ITEM(DUNGEON_COMPASS, dungeon) &&
+           !DualScreen_RandoActive();
+}
+
+// Stray fairies still to find on a storey
+static s32 Panel_FairiesOnStorey(PlayState* play, s32 dungeon, s32 storey) {
+    s32 count = 0;
+    s32 i;
+    f32 x;
+    f32 y;
+    f32 z;
+    f32 mx;
+    f32 my;
+
+    for (i = 0; i < DualScreen_FairySpotCount(play, dungeon); i++) {
+        if (DualScreen_FairySpot(play, i, &x, &y, &z) && MapDisp_PanelWorldPoint(x, y, z, storey, &mx, &my)) {
+            count++;
+        }
+    }
+    return count;
+}
+
 static s32 Panel_DungeonShownStorey(MapDispPanelInfo* info) {
     // Back to following Link once he changes floor
     if ((sDungeonStorey >= 0) && (info->playerStorey != sDungeonFollowStorey)) {
@@ -2811,6 +2838,27 @@ static Gfx* Panel_DrawDungeonMapPage(Gfx* gfx, PlayState* play, s32 dungeon) {
             gfx = Panel_SetTexturedMode(gfx, 230, 30, 20, 255);
             gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, px - 6, py - 6, 12, 12);
         }
+        // The stray fairies still out there on this floor, gently pulsing
+        if (Panel_FairyTrackerOn(dungeon)) {
+            s32 i;
+            f32 fx;
+            f32 fy;
+            f32 fz;
+            f32 mx;
+            f32 my;
+            u8 glow = 190 + (s32)(Math_SinS(play->state.frames * 0x800) * 65.0f);
+
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, glow);
+            for (i = 0; i < DualScreen_FairySpotCount(play, dungeon); i++) {
+                if (DualScreen_FairySpot(play, i, &fx, &fy, &fz) &&
+                    MapDisp_PanelWorldPoint(fx, fy, fz, storey, &mx, &my)) {
+                    s32 px = (s32)(originX + mx * zoom);
+                    s32 py = (s32)(originY + my * zoom);
+
+                    gfx = Panel_DrawTexRGBA32(gfx, sDungeonFairyTex[dungeon], 32, 24, px - 12, py - 9, 24, 18);
+                }
+            }
+        }
         gfx = Panel_SetScissor(gfx, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, DualScreen_GetCanvasHeight());
     } else {
         gfx = Panel_SetSilhouetteMode(gfx, 200, 200, 210, 255);
@@ -2837,6 +2885,12 @@ static Gfx* Panel_DrawDungeonMapPage(Gfx* gfx, PlayState* play, s32 dungeon) {
             gfx = Panel_SetTexturedMode(gfx, 230, 30, 20, 255);
             gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, DFLOOR_X + DFLOOR_W + 16,
                                   fy + DFLOOR_H / 2 - 7, 14, 14);
+        }
+        // A small fairy on floors that still have stray fairies to find
+        if (Panel_FairyTrackerOn(dungeon) && shown && (Panel_FairiesOnStorey(play, dungeon, y) > 0)) {
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+            gfx = Panel_DrawTexRGBA32(gfx, sDungeonFairyTex[dungeon], 32, 24, DFLOOR_X + DFLOOR_W - 18,
+                                      fy + DFLOOR_H - 14, 20, 15);
         }
         if (y == info.bossStorey) {
             gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
@@ -2867,7 +2921,16 @@ static Gfx* Panel_DrawDungeonMapPage(Gfx* gfx, PlayState* play, s32 dungeon) {
     } else {
         gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
     }
-    return Panel_DrawText(gfx, count, DITEM_X + 4, DMAP_Y + 352, LOG_TEXT);
+    gfx = Panel_DrawText(gfx, count, DITEM_X + 4, DMAP_Y + 352, LOG_TEXT);
+    // Fairies the tracker couldn't pin to a spot (their count still includes them)
+    if (Panel_FairyTrackerOn(dungeon) && (DualScreen_FairySpotCount(play, dungeon) >= 0) &&
+        (DualScreen_FairyUnplacedCount() > 0) && (fairies < 15)) {
+        Panel_FormatNumber(count, DualScreen_FairyUnplacedCount());
+        strcat(count, " unmarked");
+        gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 200);
+        gfx = Panel_DrawText(gfx, count, DITEM_X + 4, DMAP_Y + 378, LOG_SMALL);
+    }
+    return gfx;
 }
 
 // #endregion

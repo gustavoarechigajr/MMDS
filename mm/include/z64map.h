@@ -113,6 +113,7 @@ void MapDisp_Init(struct PlayState* play);
 void MapDisp_GetPanelInfo(struct PlayState* play, s32 storey, s32 dungeonIndex, MapDispPanelInfo* info);
 Gfx* MapDisp_DrawPanelDungeonMap(struct PlayState* play, Gfx* gfx, s32 storey, f32 originX, f32 originY, f32 zoom,
                                  s32 dungeonIndex);
+s32 MapDisp_PanelWorldPoint(f32 worldX, f32 worldY, f32 worldZ, s32 storey, f32* x, f32* y);
 s32 MapDisp_GetBossIconY(void);
 s16 MapDisp_GetBossRoomStorey(void);
 void MapDisp_InitMapData(struct PlayState* play, void* segmentAddress);

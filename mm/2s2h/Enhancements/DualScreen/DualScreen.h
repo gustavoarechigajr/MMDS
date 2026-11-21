@@ -76,6 +76,12 @@ const char* DualScreen_RandoCheckName(int32_t area, int32_t index);
 uint8_t DualScreen_RandoCheckDone(int32_t area, int32_t index);
 
 struct PlayState;
+// Stray fairies of the current temple (DualScreenFairies.cpp): how many have a known spot, each spot's world position
+// (returns whether that fairy is still uncollected this cycle), and how many couldn't be placed on the map
+int32_t DualScreen_FairySpotCount(struct PlayState* play, int32_t dungeon);
+uint8_t DualScreen_FairySpot(struct PlayState* play, int32_t index, float* x, float* y, float* z);
+int32_t DualScreen_FairyUnplacedCount(void);
+
 struct GraphicsContext;
 // Handles touch input; runs in Play_Update so actions can safely change game state (DualScreenPanels.c)
 void DualScreen_Update(struct PlayState* play);
