@@ -1,6 +1,7 @@
 #include "ship/controller/controldevice/controller/mapping/sdl/SDLGyroMapping.h"
 #include "ship/controller/controldevice/controller/mapping/ControllerGyroMapping.h"
 #include <spdlog/spdlog.h>
+#include <cmath>
 #include "ship/Context.h"
 
 #include "ship/config/ConsoleVariable.h"
@@ -109,6 +110,15 @@ void SDLGyroMapping::UpdatePad(float& x, float& y) {
 #ifdef __ANDROID__
     float gyroData[3];
     GetAndroidGyroData(nullptr, gyroData);
+    // The device's own gyro has a small resting offset that changes with temperature, and a one-off calibration
+    // leaves the aim drifting. Keep re-measuring it: while the device is held almost still (under ~2.3 degrees a
+    // second), ease the neutral point toward the reading, as emulators' continuous calibration does.
+    const float stillThreshold = 0.04f; // rad/s
+    const float followRate = 0.02f;     // per poll, ~1 s to settle at 60 polls a second
+    if (fabsf(gyroData[0] - mNeutralPitch) < stillThreshold && fabsf(gyroData[1] - mNeutralYaw) < stillThreshold) {
+        mNeutralPitch += (gyroData[0] - mNeutralPitch) * followRate;
+        mNeutralYaw += (gyroData[1] - mNeutralYaw) * followRate;
+    }
     x = (gyroData[0] - mNeutralPitch) * mSensitivity;
     y = (gyroData[1] - mNeutralYaw) * mSensitivity;
     return;
