@@ -1627,8 +1627,17 @@ static void Panel_FormatFraction(char* out, s32 have, s32 total) {
 #define LOG_MASK_SLOT 56
 #define LOG_COLLECT_ROW_H 52
 
+static s32 Panel_UpdateQuestGuide(void);
+static s32 sQuestGuide = -1;
+static s32 sQuestGuideView = 0;
+static s32 sQuestGuideStep = -1; // step tapped in a long quest, whose hint shows in the box
+
 static void Panel_UpdateQuestLog(PlayState* play) {
     s32 i;
+
+    if (Panel_UpdateQuestGuide()) {
+        return;
+    }
 
     for (i = 0; i < QUEST_LOG_VIEW_MAX; i++) {
         if (Panel_Tapped(16 + i * (LOG_HEADER_W + 8), 6, LOG_HEADER_W, 38) && (sQuestLogView != i)) {
@@ -1639,6 +1648,7 @@ static void Panel_UpdateQuestLog(PlayState* play) {
     }
     if (Panel_Tapped(LOG_LENS_X - 6, 0, 56, 50)) {
         CVarSetInteger(CVAR_HINTS, !Panel_HintsOn());
+        CVarSave();
         Audio_PlaySfx(Panel_HintsOn() ? NA_SE_SY_GLASSMODE_ON : NA_SE_SY_GLASSMODE_OFF);
         return;
     }
@@ -1646,8 +1656,12 @@ static void Panel_UpdateQuestLog(PlayState* play) {
     if ((sQuestLogView == QUEST_LOG_MAIN) || (sQuestLogView == QUEST_LOG_SIDE)) {
         for (i = 0; i < ((sQuestLogView == QUEST_LOG_MAIN) ? 6 : 4); i++) {
             if (Panel_Tapped(0, LOG_TOP + i * LOG_ROW_H, DUAL_SCREEN_CANVAS_WIDTH, LOG_ROW_H)) {
+                // Opens that quest's guide
                 sQuestLogSelected[sQuestLogView] = i;
-                Audio_PlaySfx(NA_SE_SY_CURSOR);
+                sQuestGuide = i;
+                sQuestGuideView = sQuestLogView;
+                sQuestGuideStep = -1;
+                Audio_PlaySfx(NA_SE_SY_DECIDE);
             }
         }
     } else if (sQuestLogView == QUEST_LOG_MASKS) {
@@ -1703,7 +1717,7 @@ static Gfx* Panel_DrawLogHint(Gfx* gfx, const char* hint) {
         Panel_DrawTextWrapped(&gfx, "Tap the Lens of Truth to reveal hints.", 24, LOG_HINT_Y + 18,
                               DUAL_SCREEN_CANVAS_WIDTH - 48, LOG_SMALL, 1);
     } else if (hint == NULL) {
-        Panel_DrawTextWrapped(&gfx, "Tap an entry to see its hint.", 24, LOG_HINT_Y + 18, DUAL_SCREEN_CANVAS_WIDTH - 48,
+        Panel_DrawTextWrapped(&gfx, "Tap an entry for its details.", 24, LOG_HINT_Y + 18, DUAL_SCREEN_CANVAS_WIDTH - 48,
                               LOG_SMALL, 1);
     } else {
         Panel_DrawTextWrapped(&gfx, hint, 24, LOG_HINT_Y + 6, DUAL_SCREEN_CANVAS_WIDTH - 48, LOG_SMALL, 2);
@@ -1910,6 +1924,54 @@ static SideQuest sSideQuests[] = {
     { "The Postman", ITEM_MASK_POSTMAN, 13, 3 },
 };
 
+// The guide pages' extra detail for each step: when it can be done, and up to three items it needs (ITEM_NONE pads)
+typedef struct StepExtra {
+    const char* when;
+    u8 needs[3];
+} StepExtra;
+
+// Same order as sQuestSteps
+static StepExtra sQuestStepExtras[] = {
+    { "Final Night, midnight", { ITEM_MASK_DEKU, ITEM_NONE, ITEM_NONE } },
+    { "Right after", { ITEM_OCARINA_OF_TIME, ITEM_NONE, ITEM_NONE } },
+    { "Any time", { ITEM_MASK_DEKU, ITEM_NONE, ITEM_NONE } },
+    { "Any day", { ITEM_MASK_DEKU, ITEM_NONE, ITEM_NONE } },
+    { "Any time", { ITEM_MASK_DEKU, ITEM_OCARINA_OF_TIME, ITEM_MAGIC_BEANS } },
+    { "Any time", { ITEM_MASK_DEKU, ITEM_OCARINA_OF_TIME, ITEM_NONE } },
+    { "Any time", { ITEM_BOW, ITEM_LENS_OF_TRUTH, ITEM_OCARINA_OF_TIME } },
+    { "Any time", { ITEM_MASK_GORON, ITEM_OCARINA_OF_TIME, ITEM_NONE } },
+    { "Any time", { ITEM_MASK_GORON, ITEM_OCARINA_OF_TIME, ITEM_BOW } },
+    { "Any time", { ITEM_OCARINA_OF_TIME, ITEM_NONE, ITEM_NONE } },
+    { "Within one cycle", { ITEM_MASK_ZORA, ITEM_HOOKSHOT, ITEM_BOTTLE } },
+    { "Any time", { ITEM_MASK_ZORA, ITEM_OCARINA_OF_TIME, ITEM_NONE } },
+    { "Day 1 or 2, by day", { ITEM_OCARINA_OF_TIME, ITEM_NONE, ITEM_NONE } },
+    { "Any time", { ITEM_MASK_GARO, ITEM_HOOKSHOT, ITEM_POWDER_KEG } },
+    { "Any time", { ITEM_HOOKSHOT, ITEM_MASK_GORON, ITEM_MASK_ZORA } },
+    { "Any time", { ITEM_ARROW_LIGHT, ITEM_NONE, ITEM_NONE } },
+    { "After the first temple", { ITEM_NONE, ITEM_NONE, ITEM_NONE } },
+    { "Final Night, midnight", { ITEM_OCARINA_OF_TIME, ITEM_NONE, ITEM_NONE } },
+};
+
+// Same order as sSideSteps
+static StepExtra sSideStepExtras[] = {
+    { "Day 1", { ITEM_NONE, ITEM_NONE, ITEM_NONE } },
+    { "Day 1, 13:50", { ITEM_MASK_KAFEIS_MASK, ITEM_NONE, ITEM_NONE } },
+    { "Day 1, before night", { ITEM_LETTER_TO_KAFEI, ITEM_NONE, ITEM_NONE } },
+    { "Day 2, afternoon", { ITEM_NONE, ITEM_NONE, ITEM_NONE } },
+    { "Final Day, by 18:00", { ITEM_MASK_GARO, ITEM_HOOKSHOT, ITEM_NONE } },
+    { "Final Day, before dawn", { ITEM_PENDANT_OF_MEMORIES, ITEM_NONE, ITEM_NONE } },
+    { "Any time", { ITEM_POWDER_KEG, ITEM_NONE, ITEM_NONE } },
+    { "Day 1", { ITEM_OCARINA_OF_TIME, ITEM_NONE, ITEM_NONE } },
+    { "Night 1, 2:30", { ITEM_BOW, ITEM_NONE, ITEM_NONE } },
+    { "Day 2", { ITEM_NONE, ITEM_NONE, ITEM_NONE } },
+    { "Day 2, 18:00", { ITEM_BOW, ITEM_NONE, ITEM_NONE } },
+    { "Night 1, midnight", { ITEM_NONE, ITEM_NONE, ITEM_NONE } },
+    { "Final Night", { ITEM_NONE, ITEM_NONE, ITEM_NONE } },
+    { "Any day", { ITEM_NONE, ITEM_NONE, ITEM_NONE } },
+    { "Any day", { ITEM_MASK_BUNNY, ITEM_NONE, ITEM_NONE } },
+    { "Final Day", { ITEM_LETTER_MAMA, ITEM_NONE, ITEM_NONE } },
+};
+
 static s32 Panel_SideNextStep(SideQuest* quest) {
     s32 i;
 
@@ -1961,7 +2023,213 @@ static Gfx* Panel_DrawLogSide(Gfx* gfx) {
 
 // #endregion
 
+// #region Quest guide: every step of one quest, opened by tapping it in Main Quest or Side Quests
+
+#define GUIDE_TOP 56
+#define GUIDE_BOTTOM 470
+
+// sQuestGuide: quest open in the guide (region or side quest), or -1; sQuestGuideView: QUEST_LOG_MAIN or _SIDE
+
+static s32 Panel_GuideHasItem(u8 item) {
+    if (item == ITEM_BOTTLE) {
+        return gSaveContext.save.saveInfo.inventory.items[SLOT_BOTTLE_1] != ITEM_NONE;
+    }
+    return Panel_HasItem(item);
+}
+
+// The quest's steps: first, count, and each one's label, hint, extra detail and whether it's done
+static void Panel_GuideQuest(s32* first, s32* count, const char** name, u8* icon) {
+    if (sQuestGuideView == QUEST_LOG_MAIN) {
+        *first = sQuestRegions[sQuestGuide].firstStep;
+        *count = sQuestRegions[sQuestGuide].numSteps;
+        *name = sQuestRegions[sQuestGuide].name;
+        *icon = sQuestRegions[sQuestGuide].icon;
+    } else {
+        *first = sSideQuests[sQuestGuide].firstStep;
+        *count = sSideQuests[sQuestGuide].numSteps;
+        *name = sSideQuests[sQuestGuide].name;
+        *icon = sSideQuests[sQuestGuide].icon;
+    }
+}
+
+static s32 Panel_GuideStepDone(s32 step) {
+    return (sQuestGuideView == QUEST_LOG_MAIN) ? Panel_QuestStepDone(step) : CHECK_WEEKEVENTREG(sSideSteps[step].flag);
+}
+
+// Rows share the page; with hints on, a quest of more than four steps keeps the bottom for a hint box instead
+#define GUIDE_BOX_Y 404
+static s32 Panel_GuideInlineHints(s32 count) {
+    return (GUIDE_BOTTOM - GUIDE_TOP) / count >= 70;
+}
+
+static s32 Panel_GuideRowH(s32 count) {
+    if (!Panel_GuideInlineHints(count) && Panel_HintsOn()) {
+        return (GUIDE_BOX_Y - GUIDE_TOP) / count;
+    }
+    return MIN((GUIDE_BOTTOM - GUIDE_TOP) / count, 100);
+}
+
+static s32 Panel_UpdateQuestGuide(void) {
+    if (sQuestGuide < 0) {
+        return false;
+    }
+    if (Panel_Tapped(8, 6, 120, 40)) {
+        sQuestGuide = -1;
+        sQuestGuideStep = -1;
+        Audio_PlaySfx(NA_SE_SY_DECIDE);
+        return true;
+    }
+    // In a quest too long for inline hints, tapping a step puts its hint in the box
+    {
+        s32 first;
+        s32 count;
+        const char* name;
+        u8 icon;
+        s32 i;
+
+        Panel_GuideQuest(&first, &count, &name, &icon);
+        for (i = 0; i < count; i++) {
+            if (Panel_Tapped(0, GUIDE_TOP + i * Panel_GuideRowH(count), DUAL_SCREEN_CANVAS_WIDTH,
+                             Panel_GuideRowH(count))) {
+                sQuestGuideStep = i;
+                Audio_PlaySfx(NA_SE_SY_CURSOR);
+            }
+        }
+    }
+    if (Panel_Tapped(LOG_LENS_X - 6, 0, 56, 50)) {
+        CVarSetInteger(CVAR_HINTS, !Panel_HintsOn());
+        CVarSave();
+        Audio_PlaySfx(Panel_HintsOn() ? NA_SE_SY_GLASSMODE_ON : NA_SE_SY_GLASSMODE_OFF);
+    }
+    return true;
+}
+
+static Gfx* Panel_DrawQuestGuide(Gfx* gfx) {
+    s32 first;
+    s32 count;
+    const char* name;
+    u8 icon;
+    s32 done = 0;
+    s32 next = -1;
+    s32 rowH;
+    s32 i;
+    s32 k;
+    char text[16];
+
+    Panel_GuideQuest(&first, &count, &name, &icon);
+    for (i = 0; i < count; i++) {
+        if (Panel_GuideStepDone(first + i)) {
+            done++;
+        } else if (next < 0) {
+            next = i;
+        }
+    }
+    rowH = Panel_GuideRowH(count);
+
+    // Header: back, the quest, its progress, and the Lens
+    gfx = Panel_FillRect(gfx, 8, 8, 112, 36, 120, 80, 30, Panel_Pressing(8, 6, 120, 40) ? 200 : 110);
+    gfx = Panel_SetSilhouetteMode(gfx, 255, 245, 210, 255);
+    gfx = Panel_DrawText(gfx, "< Back", 26, 16, 1.0f);
+    gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+    gfx = Panel_DrawItemIcon(gfx, icon, 152, 26, 40);
+    gfx = Panel_SetSilhouetteMode(gfx, 70, 40, 15, 255);
+    gfx = Panel_DrawText(gfx, name, 180, 16, 1.0f);
+    Panel_FormatFraction(text, done, count);
+    gfx = Panel_SetSilhouetteMode(gfx, (done == count) ? 170 : 110, (done == count) ? 120 : 70, (done == count) ? 20 : 35,
+                                  255);
+    gfx = Panel_DrawText(gfx, text, 470, 16, 1.0f);
+    if (Panel_HintsOn()) {
+        gfx = Panel_SetTexturedMode(gfx, 255, 200, 60, 230);
+        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, LOG_LENS_X - 4, 0, 52, 52);
+        gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+    } else {
+        gfx = Panel_SetTexturedMode(gfx, 90, 60, 30, 50);
+        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, LOG_LENS_X - 4, 0, 52, 52);
+        gfx = Panel_SetTexturedMode(gfx, 190, 180, 160, 210);
+    }
+    gfx = Panel_DrawItemIcon(gfx, ITEM_LENS_OF_TRUTH, LOG_LENS_X + 22, 26, 42);
+
+    // The steps in order: a stamp once done, the next one highlighted, when it happens and what it needs; with the
+    // Lens on, how to do it
+    for (i = 0; i < count; i++) {
+        s32 step = first + i;
+        s32 y = GUIDE_TOP + i * rowH;
+        s32 stepDone = Panel_GuideStepDone(step);
+        const char* label = (sQuestGuideView == QUEST_LOG_MAIN) ? sQuestSteps[step].label : sSideSteps[step].label;
+        const char* hint = (sQuestGuideView == QUEST_LOG_MAIN) ? sQuestSteps[step].hint : sSideSteps[step].hint;
+        StepExtra* extra = (sQuestGuideView == QUEST_LOG_MAIN) ? &sQuestStepExtras[step] : &sSideStepExtras[step];
+        s32 needX = DUAL_SCREEN_CANVAS_WIDTH - 20;
+
+        if ((i == sQuestGuideStep) && !Panel_GuideInlineHints(count)) {
+            gfx = Panel_FillRect(gfx, 8, y + 1, DUAL_SCREEN_CANVAS_WIDTH - 16, rowH - 2, 255, 200, 60, 140);
+        } else if (i == next) {
+            gfx = Panel_FillRect(gfx, 8, y + 1, DUAL_SCREEN_CANVAS_WIDTH - 16, rowH - 2, 255, 200, 60, 70);
+        } else if (i % 2 == 0) {
+            gfx = Panel_FillRect(gfx, 8, y + 1, DUAL_SCREEN_CANVAS_WIDTH - 16, rowH - 2, 120, 80, 30, 25);
+        }
+        // Number in a stamp, gold once done
+        gfx = Panel_SetTexturedMode(gfx, stepDone ? 255 : 90, stepDone ? 190 : 60, stepDone ? 40 : 30,
+                                    stepDone ? 255 : 90);
+        gfx = Panel_DrawTex4b(gfx, gBombersNotebookCircleTex, G_IM_FMT_I, 16, 16, 14, y + 6, 28, 28);
+        Panel_FormatNumber(text, i + 1);
+        gfx = Panel_SetSilhouetteMode(gfx, stepDone ? 90 : 255, stepDone ? 50 : 245, stepDone ? 10 : 210, 255);
+        gfx = Panel_DrawText(gfx, text, 28 - Panel_TextWidth(text, 4, 0.85f) / 2, y + 12, 0.85f);
+
+        // What it needs, right-aligned: full colour once you have it
+        for (k = 2; k >= 0; k--) {
+            u8 item = extra->needs[k];
+
+            if (item == ITEM_NONE) {
+                continue;
+            }
+            needX -= 32;
+            if (Panel_GuideHasItem(item)) {
+                gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+            } else {
+                gfx = Panel_SetTexturedMode(gfx, 100, 90, 80, 120);
+            }
+            gfx = Panel_DrawItemIcon(gfx, item, needX + 15, y + 19, 30);
+        }
+
+        gfx = Panel_SetSilhouetteMode(gfx, stepDone ? 140 : 70, stepDone ? 110 : 40, stepDone ? 70 : 15, 255);
+        gfx = Panel_DrawTextN(gfx, label, 48, 52, y + 6, 0.9f);
+        gfx = Panel_SetSilhouetteMode(gfx, 150, 90, 40, 255);
+        gfx = Panel_DrawText(gfx, extra->when, 52, y + 26, 0.75f);
+        if (Panel_HintsOn() && Panel_GuideInlineHints(count)) {
+            gfx = Panel_SetSilhouetteMode(gfx, 90, 60, 30, 255);
+            Panel_DrawTextWrapped(&gfx, hint, 52, y + 44, DUAL_SCREEN_CANVAS_WIDTH - 76, 0.75f, (rowH - 46) / 15);
+        }
+    }
+    if (!Panel_HintsOn()) {
+        gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 200);
+        gfx = Panel_DrawText(gfx, "Tap the Lens of Truth for how to do each step.", 52, GUIDE_BOTTOM - 4, 0.75f);
+    } else if (!Panel_GuideInlineHints(count)) {
+        // The tapped step's hint (or the next one's) in a box along the bottom
+        s32 shown = (sQuestGuideStep >= 0) ? sQuestGuideStep : next;
+
+        gfx = Panel_FillRect(gfx, 8, GUIDE_BOX_Y, DUAL_SCREEN_CANVAS_WIDTH - 16, GUIDE_BOTTOM - GUIDE_BOX_Y, 0, 0, 0,
+                             150);
+        gfx = Panel_SetSilhouetteMode(gfx, 255, 255, 255, 255);
+        if (shown >= 0) {
+            s32 step = first + shown;
+
+            Panel_DrawTextWrapped(&gfx, (sQuestGuideView == QUEST_LOG_MAIN) ? sQuestSteps[step].hint
+                                                                             : sSideSteps[step].hint,
+                                  20, GUIDE_BOX_Y + 8, DUAL_SCREEN_CANVAS_WIDTH - 40, 0.8f, 3);
+        } else {
+            Panel_DrawTextWrapped(&gfx, "Done for this cycle. Tap a step to read how it went.", 20, GUIDE_BOX_Y + 8,
+                                  DUAL_SCREEN_CANVAS_WIDTH - 40, 0.8f, 3);
+        }
+    }
+    return gfx;
+}
+
+// #endregion
+
 static Gfx* Panel_DrawQuestLog(Gfx* gfx) {
+    if (sQuestGuide >= 0) {
+        return Panel_DrawQuestGuide(gfx);
+    }
     gfx = Panel_DrawLogHeader(gfx);
     if (sQuestLogView == QUEST_LOG_MAIN) {
         return Panel_DrawLogMain(gfx);
