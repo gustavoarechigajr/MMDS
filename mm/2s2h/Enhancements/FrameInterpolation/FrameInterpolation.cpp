@@ -709,3 +709,10 @@ static bool invert_matrix(const float m[16], float invOut[16]) {
 
     return true;
 }
+
+// 2S2H [Dual Screen] Lets the second screen draw an actor again (the target portrait) without recording it
+extern "C" bool FrameInterpolation_SetRecording(bool on) {
+    bool was = is_recording;
+    is_recording = on;
+    return was;
+}

@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "message_data_static.h"
+#include "interface/message_static/message_static.h"
 #include "assets/2s2h_assets.h"
 #include <math.h>
 
@@ -3026,7 +3027,9 @@ static Gfx* Panel_DrawRandoPage(Gfx* gfx, PlayState* play) {
 // #region Target info: the Z-targeted enemy's name and health, over any page
 
 #define CVAR_TARGET_INFO "gEnhancements.DualScreen.TargetInfo"
-#define TARGET_W 280
+#define TARGET_W 320
+#define TARGET_H 72
+#define CVAR_TARGET_PORTRAIT "gEnhancements.DualScreen.TargetPortrait"
 #define TARGET_X ((DUAL_SCREEN_CANVAS_WIDTH - TARGET_W) / 2)
 #define TARGET_FADE_FRAMES 20
 
@@ -3063,6 +3066,10 @@ static void Panel_UpdateTarget(PlayState* play) {
     if ((actor != NULL) && (actor->hintId < ARRAY_COUNT(sTatlNames))) {
         name = sTatlNames[actor->hintId];
     }
+    if (CVarGetInteger("gDebug.DualScreenPortraitPlayer", 0)) { // testing: Link's card without an enemy
+        actor = &GET_PLAYER(play)->actor;
+        name = "Link";
+    }
     // Only enemies and the things Tatl knows about; talking to townsfolk doesn't need a card
     if (!CVarGetInteger(CVAR_TARGET_INFO, 1) || (actor == NULL) ||
         ((actor->category != ACTORCAT_ENEMY) && (actor->category != ACTORCAT_BOSS) && (name == NULL))) {
@@ -3078,7 +3085,142 @@ static void Panel_UpdateTarget(PlayState* play) {
     sTarget.boss = (actor->category == ACTORCAT_BOSS);
 }
 
-static Gfx* Panel_DrawTarget(Gfx* gfx) {
+// The game's dialogue box background (128x64 I4, mirrored to 256 wide), as the frame of the card
+static Gfx* Panel_DrawTextboxFrame(Gfx* gfx, s32 x, s32 y, s32 w, s32 h, u8 alpha) {
+    gfx = Panel_SetTexturedMode(gfx, 0, 0, 0, alpha);
+    gDPLoadTextureBlock_4b(gfx++, gMessageDefaultBackgroundTex, G_IM_FMT_I, 128, 64, 0, G_TX_MIRROR | G_TX_WRAP,
+                           G_TX_NOMIRROR | G_TX_WRAP, 7, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    gSPTextureRectangle(gfx++, x << 2, y << 2, (x + w) << 2, (y + h) << 2, G_TX_RENDERTILE, 0, 0, TEX_SCALE(256, w),
+                        TEX_SCALE(64, h));
+    return gfx;
+}
+
+// The targeted actor, when it gets a card (the same rule as Panel_UpdateTarget)
+static Actor* Panel_TargetActor(PlayState* play) {
+    Attention* attention = &play->actorCtx.attention;
+    Actor* actor = (attention->reticleFadeAlphaControl != 0) ? attention->reticleActor : NULL;
+
+    if (CVarGetInteger("gDebug.DualScreenPortraitPlayer", 0)) { // testing: portrait Link without an enemy
+        return &GET_PLAYER(play)->actor;
+    }
+    if ((actor == NULL) || !CVarGetInteger(CVAR_TARGET_INFO, 1)) {
+        return NULL;
+    }
+    if ((actor->category == ACTORCAT_ENEMY) || (actor->category == ACTORCAT_BOSS) ||
+        ((actor->hintId < ARRAY_COUNT(sTatlNames)) && (sTatlNames[actor->hintId] != NULL))) {
+        return actor;
+    }
+    return NULL;
+}
+
+// The actor's own model, drawn a second time with a camera of our own in front of it. Its draw function writes to
+// the frame's OPA/XLU/overlay lists, so those are pointed at this display list (XLU and overlay at scratch lists
+// called right after) and handed back afterwards. Frame interpolation stops recording meanwhile, so the actor's
+// on-screen matrices aren't disturbed; the panel only draws once per game frame anyway.
+static Gfx sPortraitXlu[0x1000];
+static Gfx sPortraitOverlay[0x200];
+
+static Gfx* Panel_DrawTargetPortrait(Gfx* gfx, PlayState* play, Actor* actor, s32 x, s32 y, s32 size) {
+    GraphicsContext* gfxCtx = play->state.gfxCtx;
+    Gfx* savedOpa = gfxCtx->polyOpa.p;
+    Gfx* savedXlu = gfxCtx->polyXlu.p;
+    Gfx* savedOverlay = gfxCtx->overlay.p;
+    Vp* vp = GRAPH_ALLOC(gfxCtx, sizeof(Vp));
+    Mtx* projection = GRAPH_ALLOC(gfxCtx, sizeof(Mtx));
+    Mtx* viewing = GRAPH_ALLOC(gfxCtx, sizeof(Mtx));
+    u16 perspNorm;
+    Vec3f at;
+    f32 height = fabsf(actor->focus.pos.y - actor->world.pos.y);
+    f32 radius = CLAMP(height * 0.6f, 18.0f, 500.0f);
+    f32 dist = radius * 2.5f + 10.0f;
+    s16 yaw = actor->shape.rot.y;
+    u8 recording;
+
+    // Look at the middle of the body from in front, a little above
+    at.x = (actor->world.pos.x + actor->focus.pos.x) * 0.5f;
+    at.y = (actor->world.pos.y + actor->focus.pos.y) * 0.5f;
+    at.z = (actor->world.pos.z + actor->focus.pos.z) * 0.5f;
+    if (height < 10.0f) {
+        at.y += radius * 0.5f;
+    }
+
+    if (CVarGetInteger("gDebug.DualScreenPortraitFull", 0)) { // testing: the whole panel as the viewport
+        x = 0;
+        y = 0;
+        size = DUAL_SCREEN_CANVAS_WIDTH;
+    }
+    vp->vp.vscale[0] = vp->vp.vscale[1] = size * 2;
+    vp->vp.vscale[2] = G_MAXZ / 2;
+    vp->vp.vscale[3] = 0;
+    vp->vp.vtrans[0] = (x + size / 2) * 4;
+    // Like scissors, viewports are flipped vertically inside off-screen framebuffers (see Panel_SetScissor)
+    vp->vp.vtrans[1] = (DualScreen_GetCanvasHeight() - (y + size / 2)) * 4;
+    vp->vp.vtrans[2] = G_MAXZ / 2;
+    vp->vp.vtrans[3] = 0;
+    guPerspective(projection, &perspNorm, 30.0f, 1.0f, 10.0f, dist + radius * 8.0f + 500.0f, 1.0f);
+    guLookAt(viewing, at.x + Math_SinS(yaw) * dist, at.y + radius * 0.5f, at.z + Math_CosS(yaw) * dist, at.x, at.y,
+             at.z, 0.0f, 1.0f, 0.0f);
+
+    gDPPipeSync(gfx++);
+    gfx = Panel_SetScissor(gfx, x, y, x + size, y + size);
+    gSPViewport(gfx++, vp);
+    gSPPerspNormalize(gfx++, perspNorm);
+    gSPMatrix(gfx++, projection, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    gSPMatrix(gfx++, viewing, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
+    // Push the scene's fog out of the way; the main view sets its own again every frame
+    gSPFogPosition(gfx++, 996, 1000);
+
+    recording = DualScreen_SetInterpolationRecording(false);
+    gfxCtx->polyOpa.p = gfx;
+    gfxCtx->polyXlu.p = sPortraitXlu;
+    gfxCtx->overlay.p = sPortraitOverlay;
+
+    // Lit like the pause menu's item models: a soft ambient and a light from the camera's side, not the room's
+    // lighting (dark in temples)
+    Lights_NewAndDraw(gfxCtx, 90, 90, 90, 1, 255, 255, 245, (s8)(Math_SinS(yaw) * 90.0f), 60,
+                      (s8)(Math_CosS(yaw) * 90.0f));
+    Matrix_Push();
+    Matrix_SetTranslateRotateYXZ(actor->world.pos.x, actor->world.pos.y + (actor->shape.yOffset * actor->scale.y),
+                                 actor->world.pos.z, &actor->shape.rot);
+    Matrix_Scale(actor->scale.x, actor->scale.y, actor->scale.z, MTXMODE_APPLY);
+    Actor_SetObjectDependency(play, actor);
+    gSPSegment(gfxCtx->polyOpa.p++, 0x06, play->objectCtx.slots[actor->objectSlot].segment);
+    gSPSegment(gfxCtx->polyXlu.p++, 0x06, play->objectCtx.slots[actor->objectSlot].segment);
+    actor->draw(actor, play);
+    Matrix_Pop();
+
+    gfx = gfxCtx->polyOpa.p;
+    gSPEndDisplayList(gfxCtx->polyXlu.p++);
+    gSPEndDisplayList(gfxCtx->overlay.p++);
+    if ((gfxCtx->polyXlu.p > sPortraitXlu + ARRAY_COUNT(sPortraitXlu)) ||
+        (gfxCtx->overlay.p > sPortraitOverlay + ARRAY_COUNT(sPortraitOverlay))) {
+        abort(); // already written past the scratch lists
+    }
+    gfxCtx->polyOpa.p = savedOpa;
+    gfxCtx->polyXlu.p = savedXlu;
+    gfxCtx->overlay.p = savedOverlay;
+    DualScreen_SetInterpolationRecording(recording);
+
+    gSPDisplayList(gfx++, sPortraitXlu);
+    gSPDisplayList(gfx++, sPortraitOverlay);
+
+    // Back to the 2D panel: the actor's draw leaves its own render state behind, so set up the panel's again,
+    // and restore the main view for whatever is drawn after it
+    gDPPipeSync(gfx++);
+    gfx = Gfx_SetupDL39(gfx);
+    gDPSetTextureFilter(gfx++, G_TF_BILERP);
+    gDPSetTextureLUT(gfx++, G_TT_NONE);
+    gSPViewport(gfx++, &play->view.vp);
+    gSPMatrix(gfx++, play->view.projectionPtr, G_MTX_NOPUSH | G_MTX_LOAD | G_MTX_PROJECTION);
+    gSPMatrix(gfx++, play->view.viewingPtr, G_MTX_NOPUSH | G_MTX_MUL | G_MTX_PROJECTION);
+    return Panel_SetScissor(gfx, 0, 0, DUAL_SCREEN_CANVAS_WIDTH, DualScreen_GetCanvasHeight());
+}
+
+static Gfx* Panel_DrawTarget(Gfx* gfx, PlayState* play) {
+    Actor* actor = Panel_TargetActor(play);
+    s32 portrait = (actor != NULL) && (actor->draw != NULL) && CVarGetInteger(CVAR_TARGET_PORTRAIT, 1);
+    s32 textX = TARGET_X + (portrait ? TARGET_H + 4 : 16);
+    s32 textW = TARGET_X + TARGET_W - 18 - textX;
     u8 alpha;
     s32 fill;
 
@@ -3086,22 +3228,24 @@ static Gfx* Panel_DrawTarget(Gfx* gfx) {
         return gfx;
     }
     alpha = (u8)(255 * sTarget.fade / TARGET_FADE_FRAMES);
-    gfx = Panel_FillRect(gfx, TARGET_X, 4, TARGET_W, 54, 0, 0, 0, alpha * 160 / 255);
+    gfx = Panel_DrawTextboxFrame(gfx, TARGET_X, 4, TARGET_W, TARGET_H, alpha * 200 / 255);
     if (sTarget.boss) {
-        gfx = Panel_FillRect(gfx, TARGET_X, 4, TARGET_W, 2, 255, 200, 60, alpha);
-        gfx = Panel_FillRect(gfx, TARGET_X, 56, TARGET_W, 2, 255, 200, 60, alpha);
+        gfx = Panel_FillRect(gfx, TARGET_X + 12, 6, TARGET_W - 24, 2, 255, 200, 60, alpha);
+        gfx = Panel_FillRect(gfx, TARGET_X + 12, 2 + TARGET_H, TARGET_W - 24, 2, 255, 200, 60, alpha);
+    }
+    if (portrait) {
+        gfx = Panel_DrawTargetPortrait(gfx, play, actor, TARGET_X + 10, 4 + 6, TARGET_H - 12);
     }
     // The name in the colour Tatl uses for enemies
     gfx = Panel_SetSilhouetteMode(gfx, 255, 80, 60, alpha);
-    gfx = Panel_DrawText(gfx, sTarget.name, TARGET_X + (TARGET_W - Panel_TextWidth(sTarget.name, 64, 1.0f)) / 2, 9,
-                         1.0f);
+    gfx = Panel_DrawText(gfx, sTarget.name, textX + (textW - Panel_TextWidth(sTarget.name, 64, 1.0f)) / 2, 16, 1.0f);
     // Health as the magic meter's frame filled in red, as 2S2H's enemy health bars do
     if (sTarget.maxHealth > 0) {
-        fill = (TARGET_W - 32) * MIN(sTarget.health, sTarget.maxHealth) / sTarget.maxHealth;
-        gfx = Panel_FillRect(gfx, TARGET_X + 14, 34, TARGET_W - 28, 14, 255, 255, 255, alpha);
-        gfx = Panel_FillRect(gfx, TARGET_X + 16, 36, TARGET_W - 32, 10, 40, 0, 0, alpha);
+        fill = (textW - 4) * MIN(sTarget.health, sTarget.maxHealth) / sTarget.maxHealth;
+        gfx = Panel_FillRect(gfx, textX, 44, textW, 14, 255, 255, 255, alpha);
+        gfx = Panel_FillRect(gfx, textX + 2, 46, textW - 4, 10, 40, 0, 0, alpha);
         if (fill > 0) {
-            gfx = Panel_FillRect(gfx, TARGET_X + 16, 36, fill, 10, 255, 0, 0, alpha);
+            gfx = Panel_FillRect(gfx, textX + 2, 46, fill, 10, 255, 0, 0, alpha);
         }
     }
     return gfx;
@@ -3238,7 +3382,7 @@ void DualScreen_Draw(PlayState* play) {
     } else {
         gfx = Panel_DrawQuestLog(gfx);
     }
-    gfx = Panel_DrawTarget(gfx);
+    gfx = Panel_DrawTarget(gfx, play);
     gfx = Panel_DrawPerfOverlay(gfx, play);
     gfx = Panel_DrawStrip(gfx, canvasHeight);
     Panel_End(start, gfx, play->state.gfxCtx);

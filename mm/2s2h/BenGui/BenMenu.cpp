@@ -1393,6 +1393,11 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions()
                      .DefaultValue(true)
                      .Tooltip("While you Z-target an enemy, the second screen shows its name and health."));
+    AddWidget(path, "Second Screen Target Portrait", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.TargetPortrait")
+        .Options(CheckboxOptions()
+                     .DefaultValue(true)
+                     .Tooltip("Shows the targeted enemy's own 3D model in the target info card."));
     AddWidget(path, "Second Screen FPS and Input", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.DualScreen.PerfOverlay")
         .Options(CheckboxOptions().Tooltip(

@@ -57,6 +57,9 @@ void DualScreen_PresentFrame(void);
 void DualScreen_CountFrame(void);
 int32_t DualScreen_GetFPS(void);
 
+// Turns frame interpolation's matrix recording on or off; returns whether it was on
+uint8_t DualScreen_SetInterpolationRecording(uint8_t on);
+
 struct Actor;
 // The health an actor started with (2S2H's enemy health data), for the target card
 uint8_t DualScreen_ActorMaxHealth(struct Actor* actor);

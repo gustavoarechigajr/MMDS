@@ -143,6 +143,11 @@ extern "C" int32_t DualScreen_GetFPS(void) {
 }
 
 u8 GetActorMaxHealth(Actor* actor); // EnemyHealthBars.cpp
+extern "C" bool FrameInterpolation_SetRecording(bool on); // FrameInterpolation.cpp
+
+extern "C" uint8_t DualScreen_SetInterpolationRecording(uint8_t on) {
+    return FrameInterpolation_SetRecording(on);
+}
 
 extern "C" uint8_t DualScreen_ActorMaxHealth(Actor* actor) {
     return GetActorMaxHealth(actor);
