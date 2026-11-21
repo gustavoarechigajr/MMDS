@@ -130,8 +130,9 @@ static void RegisterGyroAimLog() {
             return;
         }
         Player* player = GET_PLAYER(gPlayState);
-        __android_log_print(ANDROID_LOG_INFO, "DSGyro", "aim focusYaw %+.1f bodyYaw %+.1f deg",
-                            player->actor.focus.rot.y * (360.0f / 65536.0f), player->actor.shape.rot.y * (360.0f / 65536.0f));
+        __android_log_print(ANDROID_LOG_INFO, "DSGyro", "aim focusYaw %+.1f bodyYaw %+.1f pitch %+.1f deg",
+                            player->actor.focus.rot.y * (360.0f / 65536.0f), player->actor.shape.rot.y * (360.0f / 65536.0f),
+                            player->actor.focus.rot.x * (360.0f / 65536.0f));
     });
 }
 
