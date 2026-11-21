@@ -1429,6 +1429,9 @@ void BenMenu::AddEnhancements() {
     AddWidget(path, "Second Screen Tab: Quest Log", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.DualScreen.Tab.QuestLog")
         .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Quest Log tab on the second screen."));
+    AddWidget(path, "Second Screen Tab: Timeline", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.Tab.Timeline")
+        .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Timeline tab on the second screen."));
     AddWidget(path, "Second Screen Tab: Notebook", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.DualScreen.Tab.Notebook")
         .Options(CheckboxOptions().DefaultValue(true).Tooltip("Shows the Notebook tab on the second screen."));

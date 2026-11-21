@@ -36,6 +36,16 @@ static u16 sOriginalTime = CLOCK_TIME(0, 0);
 static s32 sOriginalDay = 0;
 static u16 sSelectedTime = CLOCK_TIME(0, 0);
 static s32 sSelectedDay = 0;
+// 2S2H [Dual Screen] An hour picked on the second screen's timeline: chosen and confirmed when the prompt opens
+static s32 sPendingDay = 0;
+static u16 sPendingTime = CLOCK_TIME(0, 0);
+static u32 sPendingFrame = 0; // when it was picked: a pick older than ~10 s is ignored
+
+extern "C" void BetterSongOfDoubleTime_SetPendingTarget(s32 day, u16 time) {
+    sPendingDay = day;
+    sPendingTime = time;
+    sPendingFrame = gPlayState != nullptr ? gPlayState->state.frames : 0;
+}
 
 extern void UpdateGameTime(u16 gameTime);
 
@@ -114,8 +124,20 @@ void OnPlayerUpdate(Actor* actor) {
         return;
     }
 
+    // 2S2H [Dual Screen] An hour picked on the second screen: select it and confirm right away
+    bool confirmPending = false;
+    if ((sPendingDay > 0) && (gPlayState->state.frames - sPendingFrame > 200)) {
+        sPendingDay = 0;
+    }
+    if ((sPendingDay > 0) && (gPlayState->msgCtx.msgMode == MSGMODE_NONE)) {
+        sSelectedDay = sPendingDay;
+        sSelectedTime = sPendingTime;
+        sPendingDay = 0;
+        confirmPending = true;
+    }
+
     // Pressing A should confirm the song
-    if (CHECK_BTN_ALL(input->press.button, BTN_A) && gPlayState->msgCtx.msgMode == MSGMODE_NONE) {
+    if ((CHECK_BTN_ALL(input->press.button, BTN_A) || confirmPending) && gPlayState->msgCtx.msgMode == MSGMODE_NONE) {
         // Check if the selected time is owned in ClockShuffle mode
         if (!Rando::ClockShuffle::IsTimeOwnedForClockShuffle(sSelectedDay, sSelectedTime)) {
             // Play error sound

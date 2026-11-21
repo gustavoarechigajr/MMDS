@@ -109,6 +109,14 @@ static Gfx* Panel_DrawTex8b(Gfx* gfx, TexturePtr tex, s32 fmt, s32 texW, s32 tex
     return gfx;
 }
 
+static Gfx* Panel_DrawTex16b(Gfx* gfx, TexturePtr tex, s32 texW, s32 texH, s32 x, s32 y, s32 w, s32 h) {
+    gDPLoadTextureBlock(gfx++, tex, G_IM_FMT_RGBA, G_IM_SIZ_16b, texW, texH, 0, G_TX_NOMIRROR | G_TX_CLAMP,
+                        G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
+    gSPTextureRectangle(gfx++, x << 2, y << 2, (x + w) << 2, (y + h) << 2, G_TX_RENDERTILE, 0, 0,
+                        TEX_SCALE(texW, w), TEX_SCALE(texH, h));
+    return gfx;
+}
+
 static Gfx* Panel_DrawTexRGBA32(Gfx* gfx, TexturePtr tex, s32 texW, s32 texH, s32 x, s32 y, s32 w, s32 h) {
     gDPLoadTextureBlock(gfx++, tex, G_IM_FMT_RGBA, G_IM_SIZ_32b, texW, texH, 0, G_TX_NOMIRROR | G_TX_CLAMP,
                         G_TX_NOMIRROR | G_TX_CLAMP, G_TX_NOMASK, G_TX_NOMASK, G_TX_NOLOD, G_TX_NOLOD);
@@ -454,8 +462,8 @@ static s32 Panel_VerticalSwipe(void) {
 #define STRIP_DIGIT_H 30
 #define STRIP_TIME_W (4 * (STRIP_DIGIT_W * 5 / 8) + STRIP_DIGIT_W / 2)
 // Seven tabs only fit between the clock and the countdown when a little smaller
-#define STRIP_TAB_SIZE ((Panel_TabCount() > 6) ? 50 : 56)
-#define STRIP_TAB_ICON ((Panel_TabCount() > 6) ? 40 : 44)
+#define STRIP_TAB_SIZE ((Panel_TabCount() > 7) ? 44 : ((Panel_TabCount() > 6) ? 50 : 56))
+#define STRIP_TAB_ICON ((Panel_TabCount() > 7) ? 36 : ((Panel_TabCount() > 6) ? 40 : 44))
 #define CVAR_LEFT_HANDED "gEnhancements.DualScreen.LeftHanded"
 
 typedef struct PanelTab {
@@ -471,6 +479,7 @@ static PanelTab sTabs[] = {
     { DUAL_SCREEN_PAGE_MAP, ITEM_COMPASS, "gEnhancements.DualScreen.Tab.Map" }, // ITEM_COMPASS's icon is the map
     { DUAL_SCREEN_PAGE_STATUS, ITEM_REMAINS_ODOLWA, "gEnhancements.DualScreen.Tab.QuestLog" },
     { DUAL_SCREEN_PAGE_NOTEBOOK, ITEM_BOMBERS_NOTEBOOK, "gEnhancements.DualScreen.Tab.Notebook" },
+    { DUAL_SCREEN_PAGE_TIMELINE, ITEM_NONE, "gEnhancements.DualScreen.Tab.Timeline" },
     { DUAL_SCREEN_PAGE_RANDO, ITEM_NONE, "gEnhancements.DualScreen.Tab.Checks" },
 };
 
@@ -568,6 +577,12 @@ static void Panel_UpdateTabs(s32 canvasHeight) {
             }
         }
     }
+    // The strip's timeline opens the Timeline page
+    if (Panel_Tapped(20, STRIP_Y - 2, DUAL_SCREEN_CANVAS_WIDTH - 40, 14) && Panel_TabAvailable(DUAL_SCREEN_PAGE_TIMELINE) &&
+        (sPage != DUAL_SCREEN_PAGE_TIMELINE)) {
+        sPage = DUAL_SCREEN_PAGE_TIMELINE;
+        Audio_PlaySfx(NA_SE_SY_DECIDE);
+    }
     if (!Panel_TabAvailable(sPage)) {
         for (i = 0; i < ARRAY_COUNT(sTabs); i++) {
             if (sTabShown[i]) {
@@ -607,6 +622,15 @@ static Gfx* Panel_DrawTabs(Gfx* gfx, s32 canvasHeight) {
             gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
         } else {
             gfx = Panel_SetTexturedMode(gfx, 190, 180, 160, 210);
+        }
+        if (tab->page == DUAL_SCREEN_PAGE_TIMELINE) {
+            // The three-day clock's sun
+            gfx = Panel_SetTexturedMode(gfx, 230, 160, 40, selected ? 255 : 170);
+            gfx = Panel_DrawTex8b(gfx, gThreeDayClockSunHourTex, G_IM_FMT_IA, 24, 24,
+                                  x + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow,
+                                  tabY + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow, STRIP_TAB_ICON + grow * 2,
+                                  STRIP_TAB_ICON + grow * 2);
+            continue;
         }
         if (tab->iconItem == ITEM_NONE) {
             gfx = Panel_DrawTexRGBA32(gfx, gChestTrackerIcon, 32, 32, x + (STRIP_TAB_SIZE - STRIP_TAB_ICON) / 2 - grow,
@@ -657,20 +681,29 @@ static Gfx* Panel_DrawStrip(Gfx* gfx, s32 canvasHeight) {
     // While the Inverted Song of Time slows time, the timeline and countdown turn a cool blue
     s32 slowed = (gSaveContext.save.timeSpeedOffset == -2);
 
-    // The three days as a timeline across the top of the strip, filled up to now
+    // The three days as a timeline across the top of the strip: day and night shading, filled up to now, with the
+    // Final Day in red. Tapping it opens the Timeline page.
     for (i = 0; i < 3; i++) {
         s32 segX = 20 + i * (segW + 4);
         s32 segFill = CLAMP(elapsed - i * 24 * 60, 0, 24 * 60) * segW / (24 * 60);
 
-        gfx = Panel_FillRect(gfx, segX, STRIP_Y, segW, 4, 90, 50, 20, 60);
+        gfx = Panel_FillRect(gfx, segX, STRIP_Y, segW / 2, 8, 200, 170, 110, 90);
+        gfx = Panel_FillRect(gfx, segX + segW / 2, STRIP_Y, segW - segW / 2, 8, 60, 60, 100, 90);
         if (segFill > 0) {
             if (slowed) {
-                gfx = Panel_FillRect(gfx, segX, STRIP_Y, segFill, 4, 60, 120, 220, 230);
+                gfx = Panel_FillRect(gfx, segX, STRIP_Y + 2, segFill, 4, 60, 120, 220, 230);
             } else {
-                gfx = Panel_FillRect(gfx, segX, STRIP_Y, segFill, 4, (i == 2) ? 190 : 120, (i == 2) ? 40 : 70, 30,
+                gfx = Panel_FillRect(gfx, segX, STRIP_Y + 2, segFill, 4, (i == 2) ? 190 : 120, (i == 2) ? 40 : 70, 30,
                                      220);
             }
         }
+    }
+    // Where now is
+    {
+        s32 nowDay = CLAMP(elapsed / (24 * 60), 0, 2);
+        s32 nowX = 20 + nowDay * (segW + 4) + (elapsed - nowDay * 24 * 60) * segW / (24 * 60);
+
+        gfx = Panel_FillRect(gfx, nowX - 1, STRIP_Y - 2, 3, 12, 220, 30, 20, 255);
     }
 
     // Day label from the three-day clock, then the time in the notebook's hand
@@ -685,8 +718,14 @@ static Gfx* Panel_DrawStrip(Gfx* gfx, s32 canvasHeight) {
     } else {
         gfx = Panel_SetTexturedMode(gfx, 200, 170, 120, 255);
     }
-    gfx = Panel_DrawTex8b(gfx, gThreeDayClockMoonHourTex, G_IM_FMT_IA, 24, 24,
-                          DUAL_SCREEN_CANVAS_WIDTH - 16 - STRIP_TIME_W - 38, centerY - 16, 32, 32);
+    // The moon looms larger as the end nears
+    {
+        s32 moon = 26 + 18 * elapsed / MOON_FALL_MINUTES;
+
+        gfx = Panel_DrawTex8b(gfx, gThreeDayClockMoonHourTex, G_IM_FMT_IA, 24, 24,
+                              DUAL_SCREEN_CANVAS_WIDTH - 16 - STRIP_TIME_W - 22 - moon / 2, centerY - moon / 2, moon,
+                              moon);
+    }
     if (remaining <= 6 * 60) {
         gfx = Panel_SetTexturedMode(gfx, 200, 30, 20, 255);
     } else if (slowed) {
@@ -752,6 +791,7 @@ static Gfx* Panel_DrawNotebookDetails(Gfx* gfx, PlayState* play);
 static void Panel_SetNotebookHighlight(void);
 static Gfx* Panel_DrawMapPage(Gfx* gfx, PlayState* play);
 static void Panel_UpdateRandoPage(PlayState* play);
+static void Panel_UpdateTimelinePage(PlayState* play);
 static void Panel_UpdateDungeonMap(PlayState* play, s32 dungeon);
 static void Panel_UpdateTarget(PlayState* play);
 static s32 sRandoWasOpen; // the Checks page was open last update
@@ -1972,6 +2012,9 @@ void DualScreen_Update(PlayState* play) {
     } else if (sPage == DUAL_SCREEN_PAGE_RANDO) {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
         Panel_UpdateRandoPage(play);
+    } else if (sPage == DUAL_SCREEN_PAGE_TIMELINE) {
+        sSelectedSlot = sDragSlot = sUseTarget = -1;
+        Panel_UpdateTimelinePage(play);
     } else {
         sSelectedSlot = sDragSlot = sUseTarget = -1;
     }
@@ -3373,6 +3416,290 @@ static Gfx* Panel_DrawPerfOverlay(Gfx* gfx, PlayState* play) {
 
 // #endregion
 
+// #region Timeline: the three days at a glance, with the notebook's appointments and Double Time by tapping an hour
+
+#define TL_X 72
+#define TL_W 552
+#define TL_ROW_Y(day) (60 + (day) * 124) // day 0..2
+#define TL_BAND_Y(day) (TL_ROW_Y(day) + 16)
+#define TL_BAND_H 30
+#define TL_LANE_Y(day, lane) (TL_BAND_Y(day) + TL_BAND_H + 6 + (lane) * 24)
+#define TL_LANES 3
+#define TL_INFO_Y 440
+#define TL_BUTTON_X 466
+#define TL_BUTTON_W 160
+
+extern TexturePtr sBombersNotebookPhotoTextures[];
+// 2S2H's Better Song of Double Time (BetterSongOfDoubleTime.cpp): picks this hour when its prompt next opens
+void BetterSongOfDoubleTime_SetPendingTarget(s32 day, u16 time);
+
+static s32 sTimelinePerson = -1; // picked appointment (person, entry), or -1
+static s32 sTimelineEntry = -1;
+static s32 sTimelineTargetDay = 0; // tapped hour to skip to (day 1..3), or 0
+static s32 sTimelineTargetMinute = 0; // minutes after 6:00
+
+static s32 Panel_TimelineX(s32 minutes) {
+    return TL_X + minutes * TL_W / (24 * 60);
+}
+
+// Minutes since the Dawn of the First Day, for comparing times across days
+static s32 Panel_TimelineNow(void) {
+    s32 day = CLAMP(CURRENT_DAY, 1, 3);
+
+    return (day - 1) * 24 * 60 + Panel_NotebookMinutes(CURRENT_TIME);
+}
+
+static char* Panel_FormatClock(char* out, s32 minutesAfterSix) {
+    s32 clock = (minutesAfterSix + 6 * 60) % (24 * 60);
+
+    out = Panel_FormatNumber(out, clock / 60);
+    *out++ = ':';
+    *out++ = '0' + (clock % 60) / 10;
+    *out++ = '0' + (clock % 60) % 10;
+    *out = '\0';
+    return out;
+}
+
+// Lays out a day's appointments in lanes; calls back per placed entry. Returns how many were placed.
+typedef struct TimelineSlot {
+    s32 person;
+    s32 entry;
+    s32 lane;
+    s32 left;
+    s32 right;
+} TimelineSlot;
+
+static s32 Panel_TimelineSlots(s32 day, TimelineSlot* slots, s32 maxSlots) {
+    s32 laneEnd[TL_LANES] = { 0, 0, 0 };
+    s32 count = 0;
+    s32 person;
+    s32 j;
+
+    for (person = 0; person < BOMBERS_NOTEBOOK_PERSON_MAX; person++) {
+        if (!Panel_PersonMet(person)) {
+            continue;
+        }
+        for (j = 0; sBombersNotebookEntries[person][j] != NB_ENTRY_END; j += 3) {
+            s32 left;
+            s32 right;
+            s32 lane;
+
+            if (NB_ENTRY_DAY(person, j) != day + 1) {
+                continue;
+            }
+            left = Panel_TimelineX(Panel_NotebookMinutes(NB_ENTRY_START(person, j)));
+            right = MAX(Panel_TimelineX(Panel_NotebookMinutes(NB_ENTRY_END_TIME(person, j))), left + 22);
+            for (lane = 0; lane < TL_LANES; lane++) {
+                if (laneEnd[lane] <= left) {
+                    break;
+                }
+            }
+            if ((lane == TL_LANES) || (count == maxSlots)) {
+                continue; // too crowded to show
+            }
+            laneEnd[lane] = right + 2;
+            slots[count].person = person;
+            slots[count].entry = j;
+            slots[count].lane = lane;
+            slots[count].left = left;
+            slots[count].right = right;
+            count++;
+        }
+    }
+    return count;
+}
+
+static s32 Panel_DoubleTimeReady(PlayState* play) {
+    return (Panel_LearnedSong(OCARINA_SONG_DOUBLE_TIME) >= 0) &&
+           CVarGetInteger("gEnhancements.Songs.BetterSongOfDoubleTime", 0);
+}
+
+static void Panel_UpdateTimelinePage(PlayState* play) {
+    TimelineSlot slots[64];
+    s32 day;
+    s32 i;
+
+    // Double Time button for the picked hour
+    if ((sTimelineTargetDay > 0) && Panel_Tapped(TL_BUTTON_X, TL_INFO_Y, TL_BUTTON_W, 36)) {
+        s32 minutes = sTimelineTargetMinute;
+        s32 clock = (minutes + 6 * 60) % (24 * 60);
+
+        if (!Panel_DoubleTimeReady(play) || (INV_CONTENT(ITEM_OCARINA_OF_TIME) != ITEM_OCARINA_OF_TIME) ||
+            (play->pauseCtx.state != PAUSE_STATE_OFF) || (play->msgCtx.msgMode != MSGMODE_NONE) ||
+            Player_InCsMode(play) || (play->transitionTrigger != TRANS_TRIGGER_OFF)) {
+            Audio_PlaySfx(NA_SE_SY_ERROR);
+            return;
+        }
+        BetterSongOfDoubleTime_SetPendingTarget(sTimelineTargetDay, CLOCK_TIME(clock / 60, clock % 60));
+        DualScreen_RequestSong(OCARINA_SONG_DOUBLE_TIME);
+        play->state.input[0].press.button |= BTN_CLEFT;
+        play->state.input[0].cur.button |= BTN_CLEFT;
+        sTimelineTargetDay = 0;
+        return;
+    }
+
+    for (day = 0; day < 3; day++) {
+        s32 count = Panel_TimelineSlots(day, slots, ARRAY_COUNT(slots));
+
+        // An appointment: read it
+        for (i = 0; i < count; i++) {
+            if (Panel_Tapped(slots[i].left, TL_LANE_Y(day, slots[i].lane) - 2, slots[i].right - slots[i].left, 24)) {
+                sTimelinePerson = slots[i].person;
+                sTimelineEntry = slots[i].entry;
+                sTimelineTargetDay = 0;
+                Audio_PlaySfx(NA_SE_SY_DECIDE);
+                return;
+            }
+        }
+        // An hour on the band: a time to skip to, if it's still ahead (and before the last hour of the final night)
+        if (Panel_Tapped(TL_X, TL_BAND_Y(day) - 8, TL_W, TL_BAND_H + 16)) {
+            s32 minutes = CLAMP((s32)(sTouch.startX - TL_X) * 24 * 60 / TL_W, 0, 24 * 60 - 1);
+            s32 target = day * 24 * 60 + minutes;
+
+            minutes -= minutes % 10;
+            target = day * 24 * 60 + minutes;
+            sTimelinePerson = sTimelineEntry = -1;
+            if ((target > Panel_TimelineNow()) && (target <= 3 * 24 * 60 - 60)) {
+                sTimelineTargetDay = day + 1;
+                sTimelineTargetMinute = minutes;
+                Audio_PlaySfx(NA_SE_SY_CURSOR);
+            } else {
+                sTimelineTargetDay = 0;
+                Audio_PlaySfx(NA_SE_SY_ERROR);
+            }
+            return;
+        }
+    }
+}
+
+static Gfx* Panel_DrawTimelinePage(Gfx* gfx, PlayState* play) {
+    static const u8 sRemains[] = { ITEM_REMAINS_ODOLWA, ITEM_REMAINS_GOHT, ITEM_REMAINS_GYORG, ITEM_REMAINS_TWINMOLD };
+    TimelineSlot slots[64];
+    char text[96];
+    char* p;
+    s32 now = Panel_TimelineNow();
+    s32 remaining = 3 * 24 * 60 - now;
+    s32 day;
+    s32 i;
+    s32 h;
+
+    // Remains collected, then today and the time left
+    for (i = 0; i < 4; i++) {
+        s32 have = CHECK_QUEST_ITEM(QUEST_REMAINS_ODOLWA + i);
+
+        gfx = Panel_SetTexturedMode(gfx, have ? 255 : 90, have ? 255 : 80, have ? 255 : 70, have ? 255 : 90);
+        gfx = Panel_DrawTexRGBA32(gfx, gItemIcons[sRemains[i]], 32, 32, 12 + i * 44, 8, 40, 40);
+    }
+    gfx = Panel_SetTexturedMode(gfx, 90, 50, 20, 255);
+    gfx = Panel_DrawTex8b(gfx, sDayTextures[CLAMP(CURRENT_DAY, 0, 4)], G_IM_FMT_I, 48, 27, 206, 12, 64, 36);
+    p = Panel_FormatClock(text, Panel_NotebookMinutes(CURRENT_TIME));
+    strcpy(p, "    ");
+    p += 4;
+    Panel_FormatNumber(p, remaining / 60);
+    strcat(text, " hours left");
+    gfx = Panel_SetSilhouetteMode(gfx, (remaining <= 6 * 60) ? 190 : 70, (remaining <= 6 * 60) ? 30 : 40, 15, 255);
+    gfx = Panel_DrawText(gfx, text, 280, 20, 1.0f);
+
+    for (day = 0; day < 3; day++) {
+        s32 count = Panel_TimelineSlots(day, slots, ARRAY_COUNT(slots));
+        s32 dayStart = day * 24 * 60;
+        s32 bandY = TL_BAND_Y(day);
+
+        // Day label, as on the clock
+        gfx = Panel_SetTexturedMode(gfx, (day == 2) ? 160 : 90, (day == 2) ? 40 : 50, 20, 255);
+        gfx = Panel_DrawTex8b(gfx, sDayTextures[day + 1], G_IM_FMT_I, 48, 27, 4, bandY - 2, 60, 34);
+
+        // Day and night, then what's already passed dimmed
+        gfx = Panel_FillRect(gfx, Panel_TimelineX(0), bandY, Panel_TimelineX(12 * 60) - Panel_TimelineX(0), TL_BAND_H,
+                             240, 215, 150, 230);
+        gfx = Panel_FillRect(gfx, Panel_TimelineX(12 * 60), bandY, Panel_TimelineX(24 * 60) - Panel_TimelineX(12 * 60),
+                             TL_BAND_H, 50, 60, 110, 230);
+        if (now > dayStart) {
+            s32 past = MIN(now - dayStart, 24 * 60);
+
+            gfx = Panel_FillRect(gfx, Panel_TimelineX(0), bandY, Panel_TimelineX(past) - Panel_TimelineX(0), TL_BAND_H,
+                                 60, 40, 25, 120);
+        }
+        // Hours every 3, labelled 6, 9, noon...
+        for (h = 0; h <= 24; h += 3) {
+            s32 x = Panel_TimelineX(h * 60);
+
+            gfx = Panel_FillRect(gfx, x, bandY + TL_BAND_H - 6, 2, 6, 90, 60, 30, 200);
+            if (h < 24) {
+                Panel_FormatNumber(text, (h + 6) % 24);
+                gfx = Panel_SetSilhouetteMode(gfx, 110, 70, 35, 220);
+                gfx = Panel_DrawText(gfx, text, x + 3, bandY - 15, 0.75f);
+            }
+        }
+        // Now
+        if ((now >= dayStart) && (now < dayStart + 24 * 60)) {
+            s32 x = Panel_TimelineX(now - dayStart);
+            s32 night = (now - dayStart) >= 12 * 60;
+
+            gfx = Panel_FillRect(gfx, x - 1, bandY - 4, 3, TL_BAND_H + 8, 220, 30, 20, 255);
+            gfx = Panel_SetTexturedMode(gfx, night ? 200 : 255, night ? 210 : 200, night ? 255 : 60, 255);
+            gfx = Panel_DrawTex8b(gfx, night ? gThreeDayClockMoonHourTex : gThreeDayClockSunHourTex, G_IM_FMT_IA, 24,
+                                  24, x - 12, bandY + 3, 24, 24);
+        }
+        // Picked hour to skip to
+        if (sTimelineTargetDay == day + 1) {
+            s32 x = Panel_TimelineX(sTimelineTargetMinute);
+
+            gfx = Panel_FillRect(gfx, x - 1, bandY - 4, 3, TL_BAND_H + 8, 60, 150, 255, 255);
+        }
+
+        // The notebook's appointments for people you've met: blue, gold once done
+        for (i = 0; i < count; i++) {
+            s32 person = slots[i].person;
+            s32 j = slots[i].entry;
+            s32 y = TL_LANE_Y(day, slots[i].lane);
+            s32 done = CHECK_WEEKEVENTREG(gBombersNotebookWeekEventFlags[NB_ENTRY_EVENT(person, j)]);
+            s32 picked = (person == sTimelinePerson) && (j == sTimelineEntry);
+
+            gfx = Panel_FillRect(gfx, slots[i].left, y + 6, slots[i].right - slots[i].left, 10, done ? 220 : 40,
+                                 done ? 170 : 80, done ? 40 : 200, picked ? 255 : 200);
+            gfx = Panel_SetTexturedMode(gfx, 255, 255, 255, 255);
+            gfx = Panel_DrawTex16b(gfx, sBombersNotebookPhotoTextures[person], 32, 32, slots[i].left, y, 22, 22);
+            if (picked) {
+                gfx = Panel_FillRect(gfx, slots[i].left, y + 22, slots[i].right - slots[i].left, 2, 255, 200, 60, 255);
+            }
+        }
+    }
+
+    // The box along the bottom: the picked appointment, the picked hour, or what to do
+    gfx = Panel_FillRect(gfx, 8, TL_INFO_Y, DUAL_SCREEN_CANVAS_WIDTH - 16, 36, 0, 0, 0, 150);
+    gfx = Panel_SetSilhouetteMode(gfx, 255, 255, 255, 255);
+    if (sTimelinePerson >= 0) {
+        s32 j = sTimelineEntry;
+
+        p = Panel_FormatClock(text, Panel_NotebookMinutes(NB_ENTRY_START(sTimelinePerson, j)));
+        *p++ = '-';
+        p = Panel_FormatClock(p, Panel_NotebookMinutes(NB_ENTRY_END_TIME(sTimelinePerson, j)));
+        *p++ = ' ';
+        *p++ = ' ';
+        Panel_MessageText(play, sBombersNotebookTextIds[NB_ENTRY_EVENT(sTimelinePerson, j)], p,
+                          sizeof(text) - (p - text), true);
+        gfx = Panel_DrawTextN(gfx, text, 60, 18, TL_INFO_Y + 10, 0.85f);
+    } else if (sTimelineTargetDay > 0) {
+        strcpy(text, "Skip to ");
+        p = Panel_FormatClock(text + strlen(text), sTimelineTargetMinute);
+        strcpy(p, (sTimelineTargetDay == 1) ? ", Day 1" : ((sTimelineTargetDay == 2) ? ", Day 2" : ", Final Day"));
+        gfx = Panel_DrawText(gfx, text, 18, TL_INFO_Y + 9, 0.9f);
+        gfx = Panel_FillRect(gfx, TL_BUTTON_X, TL_INFO_Y + 2, TL_BUTTON_W, 32, 60, 110, 200,
+                             Panel_Pressing(TL_BUTTON_X, TL_INFO_Y, TL_BUTTON_W, 36) ? 255 : 200);
+        gfx = Panel_SetSilhouetteMode(gfx, 255, 255, 255, Panel_DoubleTimeReady(play) ? 255 : 120);
+        gfx = Panel_DrawText(gfx, "Double Time", TL_BUTTON_X + 22, TL_INFO_Y + 9, 0.9f);
+    } else if (Panel_DoubleTimeReady(play)) {
+        gfx = Panel_DrawText(gfx, "Tap a person to read about it, or a later hour to skip there.", 18,
+                             TL_INFO_Y + 10, 0.8f);
+    } else {
+        gfx = Panel_DrawText(gfx, "Tap a person to read about it.", 18, TL_INFO_Y + 10, 0.8f);
+    }
+    return gfx;
+}
+
+// #endregion
+
 static Gfx* Panel_DrawWarmupPage(Gfx* gfx, PlayState* play, s32 canvasHeight) {
     s32 view = sQuestLogView;
 
@@ -3442,6 +3769,8 @@ void DualScreen_Draw(PlayState* play) {
         gfx = Panel_DrawNotebookDetails(gfx, play);
     } else if (sPage == DUAL_SCREEN_PAGE_RANDO) {
         gfx = Panel_DrawRandoPage(gfx, play);
+    } else if (sPage == DUAL_SCREEN_PAGE_TIMELINE) {
+        gfx = Panel_DrawTimelinePage(gfx, play);
     } else {
         gfx = Panel_DrawQuestLog(gfx);
     }
