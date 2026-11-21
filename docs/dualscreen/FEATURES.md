@@ -15,7 +15,7 @@ This is a custom build of the linkzenic 2S2H Android fork (v5.0.1-android.3). It
 ### The strip along the bottom (always visible)
 
 - **Left:** the day label and the current time, in the Bombers' Notebook digits.
-- **Middle:** the tabs: Items · Masks · Songs · Map · Quest Log · Notebook, plus Checks in rando saves. Any tab can be hidden in the settings. The open tab gets a gold ring, and the tab grows while pressed.
+- **Middle:** the tabs: Items (bow icon) · Masks · Songs · Map · Quest Log · Notebook, plus Checks in rando saves. Any tab can be hidden in the settings. The open tab gets a gold ring, and the tab grows while pressed.
 - **Right:** a moon icon and the time left before the moon falls. It turns red in the final 6 hours.
 - **Above the strip:** a thin three-day timeline that fills as time passes. The Final Day is in red. While the Inverted Song of Time is active, the timeline and countdown turn blue.
 
@@ -40,6 +40,8 @@ This is a custom build of the linkzenic 2S2H Android fork (v5.0.1-android.3). It
 - **Play:** tap a learned song and Link plays it on the ocarina automatically (the same mechanism as 2S2H's Song Items).
 
 ### Map
+
+- **This area:** the tab opens on the map of the area Link is in, with a red arrow at his exact position, pointing the way he faces. Zoom in to follow him closely, or zoom out past the whole area to switch to Termina; zooming far into Termina switches back.
 
 - The world map, painted HD by the MM Reloaded pack, shows:
   - a pulsing marker for Link's region
