@@ -241,3 +241,11 @@ Status key: `[ ]` todo · `[~]` in progress · `[x]` done and verified on the Th
   - v56–v57: turn and tilt are read from the sensor hub's **game rotation vector** (type 15, 200 Hz) as frame-to-frame heading/tilt changes (passed as per-game-frame amounts ×20), so the same orientation gives the same aim. **Pitch is verified** (-14.9° → -15.0° after rotating and shaking). **Yaw:** a table rotation comes back exactly, but a violent shake past the clip limit still ends ~30° off: the game rotation vector has no heading reference.
   - **NEXT (resume here):** correct the heading slowly toward the compass. The Thor has a qmc6308 magnetometer and a QTI "Rotation Vector" (type 11, with magnetometer). Plan: register type 11 too; each poll, ease the game-rotation heading offset toward the magnetic heading (time constant ~2–3 s), and ignore the compass while its heading changes faster than the gyro says (magnetic disturbance). Then rerun the table+shake test.
   - The user's config still has `gDebug.GyroLog` on (harmless). File 2 is still the bow test copy (Woodfall Temple).
+- 2026-11-21: v58 (built, **not installed yet**, because the user was playing). **Stray fairy tracker** (user request):
+  - `DualScreenFairies.cpp`, on the first look at a temple's map:
+    - takes that temple's 15 stray fairies from the rando static check list (item `RI_<DUNGEON>_STRAY_FAIRY`, with flag type and flag)
+    - loads every room resource (`play->roomList.romFiles[i].fileName`) and matches flags in each room's actor list: En_Elforg switch flag `(params>>9)&0x7F`, En_Box chest flag `params&0x1F`, Obj_Tsubo collectible `(params>>9)&0x7F`, Obj_Comb / Obj_Kibako / Obj_Kibako2 collectible `(params>>8)&0x7F`.
+  - Collected status comes from this cycle's switch/treasure/collectible flags.
+  - Map page: a pulsing icon of that temple's stray fairy at each uncollected one on the shown floor (`MapDisp_PanelWorldPoint`), a small fairy on floor buttons with some left, and "N unmarked" if any couldn't be placed.
+  - Shown with the compass. Not in rando saves. Option "Second Screen Fairy Tracker" (default on).
+  - **To test:** install, load the Woodfall test setup (slot-2 copy with `pauseSaveEntrance` 0x3000 and the compass), open Map. Expect up to 15 icons across 1F/2F, and check whether the enemy-held ones (Deku Baba, Skulltula) are placed or counted as unmarked.
