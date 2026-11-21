@@ -82,6 +82,13 @@ This is a custom build of the linkzenic 2S2H Android fork (v5.0.1-android.3). It
 
 - Puts the controller on the left of the Items and Masks pages, the grid on the right, and reverses the tab order.
 
+### Timeline
+
+- **The tab (sun icon):** your remains, today and the hours left, then the three days as rows from 6:00 to 6:00. Day and night are shaded, the past is dimmed, and a sun or moon marks now.
+- **Appointments:** the Bombers' Notebook appointments of people you've met sit on each day as bars with their portrait, gold once done. Tap one to read it.
+- **Double Time:** tap a later hour for "Skip to …", then **Double Time** to play the song and jump there (needs the Song of Time and 2S2H's Better Song of Double Time).
+- **On the strip:** a day/night timeline with a red marker for now; tap it to open the Timeline. The moon icon grows as the end nears.
+
 ### Outside gameplay
 
 - On the title and file-select screens, the bottom screen shows the Zelda / Majora's Mask logo on parchment.

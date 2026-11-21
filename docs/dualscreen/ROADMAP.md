@@ -249,3 +249,10 @@ Status key: `[ ]` todo · `[~]` in progress · `[x]` done and verified on the Th
   - Map page: a pulsing icon of that temple's stray fairy at each uncollected one on the shown floor (`MapDisp_PanelWorldPoint`), a small fairy on floor buttons with some left, and "N unmarked" if any couldn't be placed.
   - Shown with the compass. Not in rando saves. Option "Second Screen Fairy Tracker" (default on).
   - **To test:** install, load the Woodfall test setup (slot-2 copy with `pauseSaveEntrance` 0x3000 and the compass), open Map. Expect up to 15 icons across 1F/2F, and check whether the enemy-held ones (Deku Baba, Skulltula) are placed or counted as unmarked.
+- 2026-11-21: v60–v61.
+  - **Fairy tracker verified:** all 15 Woodfall fairies placed (bubble fairies are En_Elfbub; room actor ids carry spawn flags in their top bits, so mask with 0x1FFF), on both floors, on a slot-2 copy with Woodfall's flags cleared.
+  - **Timeline** (user found the thin bar lacking and asked for all four ideas):
+    - New Timeline tab (sun icon): remains, today and hours left, three day rows (6:00–6:00, day and night, past dimmed, sun/moon marker for now). The notebook's appointments for met people are lane-packed bars with portraits, gold when done; tap one to read it.
+    - Tap a future hour for "Skip to …" plus a **Double Time** button. It plays the song and hands the hour to 2S2H's Better Song of Double Time through `BetterSongOfDoubleTime_SetPendingTarget` (confirmed once no text box is open; expires after ~10 s). Verified: Day 2 5:08 → Final Day 20:17.
+    - Strip: 8 px day/night timeline with a red "now" marker; tapping it opens the Timeline. The moon icon grows from 26 to 44 px as time runs out. Tabs shrink to 44 px when there are 8.
+  - Testing rule from the user: only load the slot-2 test copy (`tools/loadtest.sh` checks File 2 is highlighted first).
