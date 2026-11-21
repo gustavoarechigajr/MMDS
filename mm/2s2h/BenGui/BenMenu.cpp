@@ -1393,6 +1393,12 @@ void BenMenu::AddEnhancements() {
         .Options(CheckboxOptions()
                      .DefaultValue(true)
                      .Tooltip("While you Z-target an enemy, the second screen shows its name and health."));
+    AddWidget(path, "Hide Top Screen Minimap", WIDGET_CVAR_CHECKBOX)
+        .CVar("gEnhancements.DualScreen.HideTopMinimap")
+        .Options(CheckboxOptions()
+                     .DefaultValue(true)
+                     .Tooltip("While the second screen is on, its Map tab shows the area, so the minimap in the "
+                              "corner of the main screen is hidden."));
     AddWidget(path, "Second Screen Fairy Tracker", WIDGET_CVAR_CHECKBOX)
         .CVar("gEnhancements.DualScreen.FairyTracker")
         .Options(CheckboxOptions()

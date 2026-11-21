@@ -9,6 +9,7 @@
 #include "overlays/kaleido_scope/ovl_kaleido_scope/z_kaleido_scope.h"
 
 #include "BenPort.h"
+#include "2s2h/Enhancements/DualScreen/DualScreen.h"
 #include "2s2h/BenGui/CosmeticEditor.h"
 #include "2s2h/BenGui/HudEditor.h"
 #include "assets/2s2h_assets.h"
@@ -1375,6 +1376,11 @@ s32 MapDisp_AreRoomsSameStorey(s32 curRoom, s32 prevRoom) {
 
 void MapDisp_DrawMinimap(PlayState* play, s32 playerInitX, s32 playerInitZ, s32 playerInitDir) {
     PauseContext* pauseCtx = &play->pauseCtx;
+
+    // 2S2H [Dual Screen] The second screen's Map tab shows this area, so the top screen can do without it
+    if (DualScreen_IsActive() && CVarGetInteger("gEnhancements.DualScreen.HideTopMinimap", 1)) {
+        return;
+    }
 
     // #region 2S2H [Cosmetic] Hud Editor support for the minimap
     // The active element is set and unset in this paraent method, so that all the child functions
